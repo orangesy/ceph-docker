@@ -1,6 +1,41 @@
 #!/bin/bash
 set -e
 
+function check_KV_IP {
+: ${K8S_NETWORK:=${CEPH_CLUSTER_NETWORK}}
+: ${FLANNEL_NETWORK:="10.0.0.0/8"}
+
+# check default KV_IP, if wrong then search ip from K8S_NETWORK
+if ! curl http://"${KV_IP}":"${KV_PORT}" &>/dev/null; then
+    local k8s_ip=$(ip -4 -o a | awk '{ sub ("/..", "", $4); print $4 }' | grepcidr "${K8S_NETWORK}")
+else
+    log_success "Communicate with ETCD server using ${KV_IP}:${KV_PORT}"
+    return 0
+fi
+
+# if k8s_ip still can't connect to ETCD then search FLANNEL_NETWORK
+if ! curl http://${k8s_ip}:${KV_PORT} &>/dev/null; then
+    local pre_flan_ip=$(ip -4 -o a | awk '{ sub ("/..", "", $4); print $4 }' | grepcidr "${FLANNEL_NETWORK}")
+    local flannel_ip=$(echo ${pre_flan_ip} | awk -F "." '{ sub ($4,1); print $0 }')
+else
+    log_success "Communicate with ETCD server using ${k8s_ip}:${KV_PORT}"
+    KV_IP=${k8s_ip}
+    return 0
+fi
+
+# finally we check flannel ip then exit
+if ! curl http://${flannel_ip}:${KV_PORT} &>/dev/null; then
+    log_err "Can't connect to ETCD Server using the following ips. Please check network setting."
+    log_err "http://${KV_IP}:${KV_PORT}"
+    log_err "http://${k8s_ip}:${KV_PORT}"
+    log_err "http://${flannel_ip}:${KV_PORT}"
+    exit 1
+else
+    log_success "Communicate with ETCD server using ${flannel_ip}:${KV_PORT}"
+    KV_IP=${flannel_ip}
+fi
+}
+
 sed -r "s/@CLUSTER@/${CLUSTER:-ceph}/g" \
     /etc/confd/conf.d/ceph.conf.toml.in > /etc/confd/conf.d/ceph.conf.toml
 
@@ -33,10 +68,10 @@ function get_mon_config {
   fi
 
   echo "Adding Mon Host - ${MON_NAME}"
-  kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} ${KV_TLS} put ${CLUSTER_PATH}/mon_host/${MON_NAME} ${MON_IP} > /dev/null 2>&1
+  kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} ${KV_TLS} put ${CLUSTER_PATH}/mon_host/${MON_NAME} ${MON_IP}:6789 > /dev/null 2>&1
 
   # Acquire lock to not run into race conditions with parallel bootstraps
-  until kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} ${KV_TLS} cas ${CLUSTER_PATH}/lock $MON_NAME > /dev/null 2>&1 ; do
+  until etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/lock $MON_NAME > /dev/null 2>&1 ; do
     echo "Configuration is locked by another host. Waiting."
     sleep 1
   done
@@ -78,6 +113,11 @@ function get_mon_config {
   else
     # Create initial Mon, keyring
     echo "No configuration found for cluster ${CLUSTER}. Generating."
+
+    # Populate KV first
+    populate_kv
+    kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} ${KV_TLS} put ${CLUSTER_PATH}/osd/cluster_network ${CEPH_CLUSTER_NETWORK}
+    kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} ${KV_TLS} put ${CLUSTER_PATH}/osd/public_network ${CEPH_PUBLIC_NETWORK}
 
     FSID=$(uuidgen)
     kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} ${KV_TLS} put ${CLUSTER_PATH}/auth/fsid ${FSID}
