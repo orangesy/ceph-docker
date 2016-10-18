@@ -983,17 +983,6 @@ function osd_controller () {
 }
 
 
-##############
-# CEPH_BOARD #
-##############
-
-function ceph_board {
-  start_config
-  log_info "Ceph-Dashboard starting..."
-  /etc/ceph-dash/ceph-dash.py
-}
-
-
 ################
 # RBD_SNAPSHOT #
 ################
@@ -1116,9 +1105,6 @@ case "$CEPH_DAEMON" in
     ;;
   build_osd)
     build_osd
-    ;;
-  board)
-    ceph_board
     ;;
   snapshot)
     rbd_snapshot
