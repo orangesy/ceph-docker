@@ -42,9 +42,9 @@ spec:
         - name: disk-mapping
           hostPath:
             path: /opt/etc/port-mapping.json
-        - name: paas-sds
+        - name: osd-enable-list
           hostPath:
-            path: /opt/etc/paas_sds.json
+            path: /opt/etc/ceph-osd-enable-list.json
       containers:
         - name: ceph-osd-pod
           image: cdxvirt/ceph-daemon:1.12
@@ -56,6 +56,14 @@ spec:
               value: "cdxvirt/ceph-daemon:1.12"
             - name: "DEBUG_MODE"
               value: "false"
+            - name: "CRUSH_TYPE"
+              value: "1"
+            - name: "PGs_PER_OSD"
+              value: "64"
+            - name: "KV_PORT"
+              value: "2379"
+            - name: "KV_TYPE"
+              value: "etcd"
           volumeMounts:
             - name: docker
               mountPath: /bin/docker
@@ -77,8 +85,8 @@ spec:
               mountPath: /etc/localtime
             - name: disk-mapping
               mountPath: /disk-mapping.json
-            - name: paas-sds
-              mountPath: /paas_sds.json
+            - name: osd-enable-list
+              mountPath: /ceph-osd-enable-list.json
           ports:
             - containerPort: 6701
               hostPort: 6701
