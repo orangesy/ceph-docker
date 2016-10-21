@@ -17,7 +17,7 @@ spec:
             path: /etc/localtime
       containers:
         - name: ceph-fs-pod
-          image: cdxvirt/ceph-daemon:1.12
+          image: cdxvirt/ceph-daemon:0.1
           args: ["mds"]
           env:
             - name: "CEPHFS_CREATE"
