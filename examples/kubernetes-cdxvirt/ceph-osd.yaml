@@ -47,13 +47,13 @@ spec:
             path: /opt/etc/ceph-osd-enable-list.json
       containers:
         - name: ceph-osd-pod
-          image: cdxvirt/ceph-daemon:1.12
+          image: cdxvirt/ceph-daemon:0.1
           securityContext:
             privileged: true
           args: ["osd_controller"]
           env:
             - name: "DAEMON_VERSION"
-              value: "cdxvirt/ceph-daemon:1.12"
+              value: "cdxvirt/ceph-daemon:0.1"
             - name: "DEBUG_MODE"
               value: "false"
             - name: "CRUSH_TYPE"
