@@ -22,7 +22,7 @@ spec:
             path: /etc/localtime
       containers:
         - name: ceph-mon-pod
-          image: cdxvirt/ceph-daemon:1.12
+          image: cdxvirt/ceph-daemon:0.1
           args: ["mon"]
           env:
             - name: "CEPH_PUBLIC_NETWORK"
