@@ -495,7 +495,7 @@ function create_OSD_container () {
     OSD_NAME="OSD_${disk_name}"
     $DOCKER_CMD stop ${OSD_NAME} > /dev/null 2>&1 && $DOCKER_CMD rm ${OSD_NAME} > /dev/null
 
-    container_id=$($DOCKER_CMD run -d --name=${OSD_NAME} --privileged=true --net=host --pid=host -v /dev:/dev -v /var/lib/ceph/osd/${disk_slot}_status:/status ${OSD_MEM} ${OSD_CPU_CORE} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=/dev/${disk_name} -e OSD_TYPE=disk ${DAEMON_VERSION} osd | cut -c1-10 )
+    container_id=$($DOCKER_CMD run -d --name=${OSD_NAME} --privileged=true --net=host --pid=host -v /dev:/dev -v /var/lib/ceph/osd/${disk_slot}_status:/status ${OSD_MEM} ${OSD_CPU_CORE} -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=/dev/${disk_name} -e OSD_TYPE=disk ${DAEMON_VERSION} osd | cut -c1-10 )
     if [[ -z "${container_id}" ]]; then
         log_err "failed to create ceph osd container on slot $disk_slot $disk_name"
     else
