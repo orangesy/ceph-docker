@@ -75,58 +75,47 @@ function check_single_mon {
     fi
 }
 
-function mon_health {
-    CLUSTER_PATH=ceph-config/${CLUSTER}
-    while [ true ]; do
-        date
-        check_health
-        sleep 30
-    done
+function mon_controller {
+  CLUSTER_PATH=ceph-config/${CLUSTER}
+  : ${MAX_MONS:=3}
+  : ${K8S_IP:=${KV_IP}}
+  : ${K8S_PORT:=8080}
+
+  etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH} > /dev/null 2>&1 || log_warn "CLUSTER_PATH already exists"
+  etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons ${MAX_MONS} > /dev/null 2>&1
+  etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH}/mon_list > /dev/null 2>&1  || log_warn "mon_list already exists"
+
+  # if node have ceph_mon=true label, then add it into mon_list.
+  get_mon_label
+  for node in ${nodes_have_mon_label}; do etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/mon_list/${node} ${node} >/dev/null 2>&1; log_success "Add ${node} to mon_list"; done
+
+  while [ true ]; do
+    get_mon_label
+    check_mon_list
+    sleep 60
+  done
 }
 
-function check_health {
-    local ceph_status=$(ceph ${CEPH_OPTS} status | awk '/health/ {print $2}')
-    MON_LIST=$(ceph mon dump 2>/dev/null | awk '/mon\./ { sub ("mon.", "", $3); print $3}')
+function check_mon_list {
+  if [ "${MAX_MONS}" -eq "0" ]; then
+    return 0
+  fi
 
-    if [ ${ceph_status} != "HEALTH_OK" ]; then
-        local quorum_status=$(ceph ${CEPH_OPTS} status | grep "mons down")
-    else
-        return 0
-    fi
-
-    # is the unhealth status caused by mon_quorum?
-    if [ -z "${quorum_status}" ]; then
-        return 0
-    fi
-
-    # find the mon not in mon_quorum and remove it.
-    for mon in ${MON_LIST}; do
-        echo ${quorum_status} | grep ${mon} >/dev/null || mon_cleanup $mon
-        start_config
-    done
+  until [ $(current_mons) -ge "${MAX_MONS}" ] || [ -z "${nodes_without_mon_label}" ]; do
+    local node_to_add=$(echo ${nodes_without_mon_label} | awk '{ print $1 }')
+    etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/mon_list/${node_to_add} ${node_to_add} >/dev/null 2>&1
+    kubectl label node --server=${K8S_IP}:${K8S_PORT} ${node_to_add} ceph_mon=true --overwrite >/dev/null 2>&1 && log_success "Add ${node_to_add} to mon_list"
+    get_mon_label
+  done
 }
 
-function mon_cleanup {
-    if [ ! -z "$1" ]; then
-        local MON_NAME=$1
-    fi
-    K8S_IP=$(grep COREOS_PRIVATE_IPV4 /etc/COREOS_ENV | sed 's/COREOS_PRIVATE_IPV4=//g')
+function current_mons {
+  etcdctl -C ${KV_IP}:${KV_PORT} ls ${CLUSTER_PATH}/mon_list | wc -l
+}
 
-    # check the K8S label
-    local target_k8s_ip=$(kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} get ${CLUSTER_PATH}/mon_k8s_ip/${MON_NAME})
-    K8S_MON_LIST=$(kubectl get node --show-labels --server=${K8S_IP}:8080 | awk '/ceph\_mon\=true/ { print $1}')
-
-    # if MON not in k8s list then remove it
-    if ! echo ${K8S_MON_LIST} | grep -w ${target_k8s_ip} >/dev/null; then
-        ceph ${CEPH_OPTS} mon remove ${MON_NAME}
-        ceph ${CEPH_OPTS} mon getmap -o /tmp/monmap
-        uuencode /tmp/monmap - | kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} put ${CLUSTER_PATH}/monmap -
-        rm /tmp/monmap
-    fi
-
-    # delete the failed MON info on ETCD
-    kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} del ${CLUSTER_PATH}/mon_host/${MON_NAME}
-    kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} del ${CLUSTER_PATH}/mon_k8s_ip/${MON_NAME}
+function get_mon_label {
+  nodes_have_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | awk '/Ready/ { print $1 " " $4 }' | awk '/ceph_mon=true/ { print $1 }')
+  nodes_without_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | awk '/Ready/ { print $1 " " $4 }' | awk '!/ceph_mon=true/ { print $1 }')
 }
 
 function crush_initialization () {

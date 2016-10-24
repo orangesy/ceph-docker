@@ -3,7 +3,6 @@ set -e
 
 function check_KV_IP {
 : ${K8S_NETWORK:=${CEPH_CLUSTER_NETWORK}}
-: ${FLANNEL_NETWORK:="10.0.0.0/8"}
 
 # check default KV_IP, if wrong then search ip from K8S_NETWORK
 if ! curl http://"${KV_IP}":"${KV_PORT}" &>/dev/null; then
@@ -15,8 +14,7 @@ fi
 
 # if k8s_ip still can't connect to ETCD then search FLANNEL_NETWORK
 if ! curl http://${k8s_ip}:${KV_PORT} &>/dev/null; then
-    local pre_flan_ip=$(ip -4 -o a | awk '{ sub ("/..", "", $4); print $4 }' | grepcidr "${FLANNEL_NETWORK}")
-    local flannel_ip=$(echo ${pre_flan_ip} | awk -F "." '{ sub ($4,1); print $0 }')
+    local flannel_gw=$(route | awk '/default/ {print $2 }')
 else
     log_success "Communicate with ETCD server using ${k8s_ip}:${KV_PORT}"
     KV_IP=${k8s_ip}
@@ -24,15 +22,15 @@ else
 fi
 
 # finally we check flannel ip then exit
-if ! curl http://${flannel_ip}:${KV_PORT} &>/dev/null; then
+if ! curl http://${flannel_gw}:${KV_PORT} &>/dev/null; then
     log_err "Can't connect to ETCD Server using the following ips. Please check network setting."
     log_err "http://${KV_IP}:${KV_PORT}"
     log_err "http://${k8s_ip}:${KV_PORT}"
-    log_err "http://${flannel_ip}:${KV_PORT}"
+    log_err "http://${flannel_gw}:${KV_PORT}"
     exit 1
 else
-    log_success "Communicate with ETCD server using ${flannel_ip}:${KV_PORT}"
-    KV_IP=${flannel_ip}
+    log_success "Communicate with ETCD server using ${flannel_gw}:${KV_PORT}"
+    KV_IP=${flannel_gw}
 fi
 }
 
