@@ -1103,6 +1103,9 @@ case "$CEPH_DAEMON" in
   osd_controller)
     osd_controller
     ;;
+  mon_controller)
+    mon_controller
+    ;;
   build_osd)
     build_osd
     ;;
