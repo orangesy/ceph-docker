@@ -22,7 +22,7 @@ spec:
             path: /etc/localtime
       containers:
         - name: ceph-mon-pod
-          image: cdxvirt/ceph-daemon:0.1
+          image: cdxvirt/ceph-daemon:latest
           args: ["mon"]
           env:
             - name: "CEPH_PUBLIC_NETWORK"
@@ -44,6 +44,3 @@ spec:
               mountPath: /var/lib/ceph
             - name: localtime
               mountPath: /etc/localtime
-          ports:
-            - containerPort: 6700
-              hostPort: 6700

@@ -322,10 +322,10 @@ function osd_controller_init () {
     fi
 
     : ${SYS_BLOCK:="/sys/class/block/"}
-    : ${DISK_MAPPING:="/disk-mapping.json"}
+    : ${DISK_MAPPING:="/opt/etc/port-mapping.json"}
     : ${DISKS:=""}
     : ${OSD_ENABLE:=true}
-    : ${OSD_ENABLE_CONF:="/ceph-osd-enable-list.json"}
+    : ${OSD_ENABLE_CONF:="/opt/etc/ceph-osd-enable-list.json"}
     : ${OSD_ENABLE_LIST:=""}
     : ${OSD_MAP_DIR:="/var/lib/ceph/osd"}
     : ${OSD_MAP_CONF:="${OSD_MAP_DIR}/map.conf"}
@@ -368,7 +368,6 @@ function get_OSD_config () {
     OSD_MAP=$(cat $OSD_MAP_CONF)
 }
 
-#use paas_sds.json filter and build container in local disks list
 function build_osd_container () {
 
     while read line ; do
@@ -387,8 +386,9 @@ function build_osd_container () {
         disk_size=$(lsblk /dev/$disk_name --output NAME,SIZE | grep $disk_name | grep -v '-' | awk '{print $2}')
         log_info "get slots $disk_slot $disk_name SIZE=$disk_size ROTA=$disk_rota on $SYS_BLOCK$disk_name"
 
-        #check disk is system disk , if true continue run next disk
-        if [[ "${disk_name}" == "$(df | grep '/var/lib/ceph' | awk '{print $1}' | sed -n 's/.*\/\([a-z]*\)[0-9]/\1/p')" ]]; then
+        # Check disk is system disk , if true continue run next disk
+        # XXX: We should not only avoid system disk as OSD disk but also disks that already mounted
+        if [[ "${disk_name}" == "$(df -a | grep '/var/lib/ceph' | awk '{print $1}' | sed -n 's/.*\/\([a-z]*\)[0-9]/\1/p')" ]]; then
             log_info "$disk_name is system disk"
             continue
         fi

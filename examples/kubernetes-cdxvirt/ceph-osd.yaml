@@ -39,23 +39,20 @@ spec:
         - name: localtime
           hostPath:
             path: /etc/localtime
-        - name: disk-mapping
+        - name: host-config
           hostPath:
-            path: /opt/etc/port-mapping.json
-        - name: osd-enable-list
-          hostPath:
-            path: /opt/etc/ceph-osd-enable-list.json
+            path: /opt/etc/
       containers:
         - name: ceph-osd-pod
-          image: cdxvirt/ceph-daemon:0.1
+          image: cdxvirt/ceph-daemon:latest
           securityContext:
             privileged: true
           args: ["osd_controller"]
           env:
             - name: "DAEMON_VERSION"
-              value: "cdxvirt/ceph-daemon:0.1"
+              value: "cdxvirt/ceph-daemon:latest"
             - name: "DEBUG_MODE"
-              value: "false"
+              value: "true"
             - name: "CRUSH_TYPE"
               value: "1"
             - name: "PGs_PER_OSD"
@@ -83,10 +80,5 @@ spec:
               mountPath: /dev/
             - name: localtime
               mountPath: /etc/localtime
-            - name: disk-mapping
-              mountPath: /disk-mapping.json
-            - name: osd-enable-list
-              mountPath: /ceph-osd-enable-list.json
-          ports:
-            - containerPort: 6701
-              hostPort: 6701
+            - name: host-config
+              mountPath: /opt/etc
