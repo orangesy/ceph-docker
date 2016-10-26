@@ -4,6 +4,7 @@ metadata:
   name: ceph-mon
   labels:
     name: ceph-mon
+  namespace: ceph
 spec:
   template:
     metadata:
