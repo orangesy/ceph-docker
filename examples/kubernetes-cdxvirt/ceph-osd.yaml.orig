@@ -1,0 +1,92 @@
+apiVersion: extensions/v1beta1
+kind: DaemonSet
+metadata:
+  name: ceph-osd
+spec:
+  template:
+    metadata:
+      labels:
+        name: ceph-osd
+    spec:
+      hostNetwork: true
+      nodeSelector:
+        ceph_osd: "true"
+      volumes:
+        - name: docker
+          hostPath:
+            path: /bin/docker
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+        - name: ceph-dir
+          hostPath:
+            path: /var/lib/ceph/
+        - name: libsystemd
+          hostPath:
+            path: /lib64/libsystemd.so.0
+        - name: libdevmapper
+          hostPath:
+            path: /lib64/libdevmapper.so
+        - name: libgcrypt
+          hostPath:
+            path: /lib64/libgcrypt.so
+        - name: libgpg-error
+          hostPath:
+            path: /lib64/libgpg-error.so
+        - name: dev
+          hostPath:
+            path: /dev/
+        - name: localtime
+          hostPath:
+            path: /etc/localtime
+        - name: host-config
+          hostPath:
+            path: /opt/etc/
+      containers:
+        - name: ceph-osd-pod
+<<<<<<< HEAD
+          image: cdxvirt/ceph-daemon:latest
+=======
+          image: cdxvirt/ceph-daemon:0.1
+>>>>>>> ebc360df9b6618fc7133052fc0f0ea2ca9317f55
+          securityContext:
+            privileged: true
+          args: ["osd_controller"]
+          env:
+            - name: "DAEMON_VERSION"
+<<<<<<< HEAD
+              value: "cdxvirt/ceph-daemon:latest"
+=======
+              value: "cdxvirt/ceph-daemon:0.1"
+>>>>>>> ebc360df9b6618fc7133052fc0f0ea2ca9317f55
+            - name: "DEBUG_MODE"
+              value: "true"
+            - name: "CRUSH_TYPE"
+              value: "1"
+            - name: "PGs_PER_OSD"
+              value: "64"
+            - name: "KV_PORT"
+              value: "2379"
+            - name: "KV_TYPE"
+              value: "etcd"
+          volumeMounts:
+            - name: docker
+              mountPath: /bin/docker
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            - name: ceph-dir
+              mountPath: /var/lib/ceph/
+            - name: libsystemd
+              mountPath: /lib/x86_64-linux-gnu/libsystemd.so.0
+            - name: libdevmapper
+              mountPath: /lib/x86_64-linux-gnu/libdevmapper.so.1.02
+            - name: libgcrypt
+              mountPath: /lib/x86_64-linux-gnu/libgcrypt.so.20
+            - name: libgpg-error
+              mountPath: /lib/x86_64-linux-gnu/libgpg-error.so.0
+            - name: dev
+              mountPath: /dev/
+            - name: localtime
+              mountPath: /etc/localtime
+            - name: host-config
+              mountPath: /opt/etc

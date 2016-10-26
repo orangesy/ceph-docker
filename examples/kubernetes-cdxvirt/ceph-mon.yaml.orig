@@ -1,0 +1,50 @@
+apiVersion: extensions/v1beta1
+kind: DaemonSet
+metadata:
+  name: ceph-mon
+  labels:
+    name: ceph-mon
+spec:
+  template:
+    metadata:
+      labels:
+        name: ceph-mon
+    spec:
+      hostNetwork: true
+      nodeSelector:
+        ceph_mon: "true"
+      volumes:
+        - name: cephconfig
+          hostPath:
+            path: /var/lib/ceph
+        - name: localtime
+          hostPath:
+            path: /etc/localtime
+      containers:
+        - name: ceph-mon-pod
+<<<<<<< HEAD
+          image: cdxvirt/ceph-daemon:latest
+=======
+          image: cdxvirt/ceph-daemon:0.1
+>>>>>>> ebc360df9b6618fc7133052fc0f0ea2ca9317f55
+          args: ["mon"]
+          env:
+            - name: "CEPH_PUBLIC_NETWORK"
+              value: "172.18.0.0/24"
+            - name: "CEPH_CLUSTER_NETWORK"
+              value: "172.17.0.0/24"
+            - name: "K8S_NETWORK"
+              value: "172.17.0.0/24"
+            - name: "DEBUG_MODE"
+              value: "false"
+            - name: "KV_TYPE"
+              value: "etcd"
+            - name: "KV_PORT"
+              value: "2379"
+            - name: "NETWORK_AUTO_DETECT"
+              value: "5"
+          volumeMounts:
+            - name: cephconfig
+              mountPath: /var/lib/ceph
+            - name: localtime
+              mountPath: /etc/localtime
