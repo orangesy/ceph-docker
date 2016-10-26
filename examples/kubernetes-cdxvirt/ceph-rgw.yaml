@@ -17,7 +17,7 @@ spec:
             path: /etc/localtime
       containers:
         - name: ceph-rgw-pod
-          image: cdxvirt/ceph-daemon:0.1
+          image: cdxvirt/ceph-daemon:latest
           args: ["rgw"]
           env:
             - name: "RGW_CIVETWEB_PORT"
