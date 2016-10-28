@@ -967,19 +967,12 @@ done
 # build_osd  #
 ##############
 
-function build_osd () {
+function osd_controller () {
   start_config
   crush_initialization
+  osd_controller_env
   osd_controller_init
-  get_disks
-  get_OSD_config
-  build_osd_container
   auto_change_crush
-}
-
-function osd_controller () {
-  build_osd
-  hotplug_OSD
 }
 
 
@@ -1105,9 +1098,6 @@ case "$CEPH_DAEMON" in
     ;;
   mon_controller)
     mon_controller
-    ;;
-  build_osd)
-    build_osd
     ;;
   snapshot)
     rbd_snapshot

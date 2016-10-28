@@ -304,193 +304,91 @@ function set_pg_num () {
 
 }
 # setup/check require option and tool
+function osd_controller_env () {
+  command -v jq > /dev/null 2>&1 || { echo "Command not found: jq"; exit 1; }
+  command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
+  command -v lspci > /dev/null 2>&1 || { echo "Command not found: lspci"; exit 1; }
+  JQ_CMD=$(command -v jq)
+  JQ_CMD=$(which jq)
+  DOCKER_CMD=$(command -v docker)
+  DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
+  # show docker version and check docker libraries load status
+  if [[ -n "${DOCKER_VERSION}" ]]; then
+    log_info "docker version ${DOCKER_VERSION}"
+  else
+    $DOCKER_CMD -v
+    exit 1
+  fi
+
+  : ${OSD_DIR:="/var/lib/ceph/osd"}
+  if [ -n "${OSD_MEM}" ]; then OSD_MEM="-m ${OSD_MEM}"; fi
+  if [ -n "${OSD_CPU_CORE}" ]; then OSD_CPU_CORE="-c ${OSD_CPU_CORE}"; fi
+}
+
+# Start OSDs they are ready to run. (existing osds)
 function osd_controller_init () {
+  BUILD_FIRST_OSD=true
 
-    command -v jq > /dev/null 2>&1 || { echo "Command not found: jq"; exit 1; }
-    command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
-    command -v lspci > /dev/null 2>&1 || { echo "Command not found: lspci"; exit 1; }
-    JQ_CMD=$(command -v jq)
-    JQ_CMD=$(which jq)
-    DOCKER_CMD=$(command -v docker)
-    DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
-    # show docker version and check docker libraries load status
-    if [[ -n "${DOCKER_VERSION}" ]]; then
-        log_info "docker version ${DOCKER_VERSION}"
-    else
-        $DOCKER_CMD -v
-        exit 1
+  # get all avail disks
+  DISKS=$(get_avail_disk)
+
+  if [ -z "${DISKS}" ]; then
+    log_err "No Disks"
+    return 0
+  fi
+
+  for disk in ${DISKS}; do
+    if [ "$(is_osd_disk ${disk})" == "true" ]; then
+      check_run_osd $disk
     fi
+  done
 
-    : ${SYS_BLOCK:="/sys/class/block/"}
-    : ${DISK_MAPPING:="/opt/etc/port-mapping.json"}
-    : ${DISKS:=""}
-    : ${OSD_ENABLE:=true}
-    : ${OSD_ENABLE_CONF:="/opt/etc/ceph-osd-enable-list.json"}
-    : ${OSD_ENABLE_LIST:=""}
-    : ${OSD_MAP_DIR:="/var/lib/ceph/osd"}
-    : ${OSD_MAP_CONF:="${OSD_MAP_DIR}/map.conf"}
-    if [ ! -z $OSD_MEM ]; then OSD_MEM="-m ${OSD_MEM}"; fi
-    if [ ! -z $OSD_CPU_CORE ]; then OSD_CPU_CORE="-c ${OSD_CPU_CORE}"; fi
+  # If no osd is running, then build one.
+  if [ "${BUILD_FIRST_OSD}" == "true" ]; then
+    build_osd
+  fi
 }
 
-#check local disks
-function get_disks () {
+function check_run_osd () {
+  if [ -z "$1" ]; then
+    log_err "check_run_osd () need to assign a disk."
+    return 1
+  else
+    local disk2add=$1
+  fi
 
-    BLOCKS=$(readlink ${SYS_BLOCK}* -e | sed -n "s/\(.*ata[0-9]\{,2\}\).*\/\(sd[a-z]\)$/\1 \2/p")
-    [[ -n "${BLOCKS}" ]] || ( log_err "NO such disk block on ${SYS_BLOCK}" && exit 1 )
-
-    HW_BIOS=$(lspci -mm | sed 's/\([^"]*\)"\([^"]*\)".*/\1 \2/' | md5sum | awk '{print $1}')
-    [[ -n "${HW_BIOS}" ]] || ( log_err "NO such pci_md5 " && exit 1 )
-
-    [ -e $DISK_MAPPING ] || ( log_err "NO such file ${DISK_MAPPING}" && exit 1 )
+  # IF OSD isn't running? Then we can begin to check which cluster the OSD belong to.
+  if is_osd_running ${disk2add}; then
+    BUILD_FIRST_OSD=false
+    log_success "${disk2add} is running as OSD."
+  elif ! is_osd_correct ${disk2add}; then
+    log_warn "The OSD disk ${disk2add} isn't from current Ceph cluster."
+  else
+    activate_osd_container ${disk2add}
+  fi
 }
 
-# get OSD enable list & OSD map config
-function get_OSD_config () {
+function activate_osd_container () {
+  if [ -z "$1" ]; then
+    log_err "activate_osd_container () need to assign a OSD."
+    return 1
+  else
+    local disk2act=$1
+  fi
 
-    if [ -e $OSD_ENABLE_CONF ]; then
-        OSD_ENABLE_LIST=$(cat $OSD_ENABLE_CONF | $JQ_CMD '.slot_osd_disks[]')
-    elif [ ! -z $OSD_ENABLE_LIST ]; then
-        OSD_ENABLE_LIST=$(echo "${OSD_ENABLE_LIST}" | tr "," "\n")
-    else
-        log_info "NO such file ${OSD_ENABLE_CONF}"
-        OSD_ENABLE_LIST=false
-    fi
+  OSD_NAME=$(disk_2_osd_id ${disk2act})
+  # XXX: auto find DAEMON_VERSION
+  osd_container=$($DOCKER_CMD run -d --name=${OSD_NAME} --privileged=true --net=host --pid=host -v /dev:/dev  ${OSD_MEM} ${OSD_CPU_CORE} -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=${disk2act} -e OSD_TYPE=activate ${DAEMON_VERSION} osd | cut -c 1-12)
 
-    if [[ "${OSD_ENABLE}" == false || -z "${OSD_ENABLE_LIST}" ]]; then
-        log_info "NO such ${OSD_ENABLE_CONF} info"
-        OSD_ENABLE_LIST=false
-    else
-        log_info "OSD_ENABLE_LIST is $(echo $OSD_ENABLE_LIST | sed ':a;N;$!ba;s/\n/ /g') from $OSD_ENABLE_CONF list"
-    fi
-    mkdir -p $OSD_MAP_DIR
-    touch $OSD_MAP_CONF
-    OSD_MAP=$(cat $OSD_MAP_CONF)
+  # XXX: check OSD container status for few seconds
+  if is_osd_running ${disk2act}; then
+    BUILD_FIRST_OSD=false
+    log_success "Success to activate ${disk2act}"
+  fi
 }
 
-function build_osd_container () {
-
-    while read line ; do
-        disk_block=$(echo $line | awk '{print $1}')
-        disk_name=$(echo $line | awk '{print $2}')
-
-        #check disk_name if empty continue run next
-        [[ -n "${disk_name}" ]] || ( log_err "NO such $disk_name" && continue )
-
-        #check disk_slot if empty continue run next
-        disk_slot=$(cat $DISK_MAPPING | $JQ_CMD --arg hw_id $HW_BIOS --arg port $disk_block '.[$hw_id].disks[]  | select(.port == $port) | .slot' | sed  's/\"//g' )
-        [[ -n "${disk_slot}" ]] || ( log_err "NO such $disk_block disk slot on $DISK_MAPPING" && continue ) 
-
-        # SSD disk rota=0
-        disk_rota=$(lsblk /dev/$disk_name --output NAME,ROTA | grep $disk_name | grep -v '-' | awk '{print $2}')
-        disk_size=$(lsblk /dev/$disk_name --output NAME,SIZE | grep $disk_name | grep -v '-' | awk '{print $2}')
-        log_info "get slots $disk_slot $disk_name SIZE=$disk_size ROTA=$disk_rota on $SYS_BLOCK$disk_name"
-
-        # Check disk is system disk , if true continue run next disk
-        # XXX: We should not only avoid system disk as OSD disk but also disks that already mounted
-        if [[ "${disk_name}" == "$(df -a | grep '/var/lib/ceph' | awk '{print $1}' | sed -n 's/.*\/\([a-z]*\)[0-9]/\1/p')" ]]; then
-            log_info "$disk_name is system disk"
-            continue
-        fi
-
-        #check OSD_ENABLE create OSD_ENABLE_CONF list to build container
-        if [[ "${OSD_ENABLE_LIST}" = false || -n $(echo "$OSD_ENABLE_LIST" | awk /^$disk_slot$/'{print $0}') ]]; then
-
-            container_id=$(echo "$OSD_MAP" | awk /^$disk_slot\ $disk_name\ /'{print $3}')
-            if [[ -n "$container_id" ]]; then
-
-                if is_container_running $container_id; then
-                    echo "$disk_slot $disk_name $container_id" >> ${OSD_MAP_CONF}.tmp
-                    log_success "OSD $disk_slot $disk_name container $container_id is exist"
-                else
-                    log_info "OSD container $container_id not running"
-                    create_OSD_container
-                fi
-            else
-                create_OSD_container
-            fi
-
-            if [[ "${OSD_ENABLE_LIST}" = false ]]; then
-                break
-            fi
-        fi
-    done < <(echo "$BLOCKS")
-
-    if [[ -n "${OSD_MAP_CONF}.tmp" ]]; then
-        cat ${OSD_MAP_CONF}.tmp > ${OSD_MAP_CONF}
-        rm ${OSD_MAP_CONF}.tmp
-    else
-        log_err "NO such ${OSD_MAP_CONF}.tmp , check your disk list"
-    fi
-
-    check_OSD_container
-    log_success "finish create osd and output osd map config to ${OSD_MAP_CONF}"
-}
-
-function check_OSD_container () {
-
-    log_info "check each OSD status"
-    sleep 10
-    OSD_COUNT=$(cat ${OSD_MAP_CONF} | wc -l)
-
-    until [ "${OSD_RUNNING}" = "${OSD_COUNT}" ]; do
-        OSD_RUNNING=0
-        while read line ; do
-            disk_slot=$(echo $line | awk '{print $1}')
-            disk_name=$(echo $line | awk '{print $2}')
-            container_id=$(echo $line | awk '{print $3}')
-            status=$(cat /var/lib/ceph/osd/${disk_slot}_status)
-
-            log_info "$disk_slot OSD container $container_id status $status"
-            case "$status" in
-                OSD_Starting)
-                    if is_container_running $container_id; then
-                        OSD_RUNNING=$(( $OSD_RUNNING + 1))
-                    else
-                        $DOCKER_CMD start $container_id
-                    fi
-                ;;
-                PREPARE_ERR)
-                    disk_mktable
-                ;;
-                ZAP_ERR)
-                    disk_mktable
-                ;;
-                CLUSTER_LOST_CON)
-                    restart_OSD
-                ;;
-                "")
-                ;;
-                *)
-                    if is_container_running $container_id; then
-                        OSD_RUNNING=$(( $OSD_RUNNING + 1))
-                    else
-                        $DOCKER_CMD start $container_id
-                    fi
-                ;;
-            esac
-
-        done < <(cat "${OSD_MAP_CONF}")
-
-        log_info "create $OSD_RUNNING / $OSD_COUNT OSD container"
-        sleep 20
-    done
-}
-
-function create_OSD_container () {
-
-    touch /var/lib/ceph/osd/${disk_slot}_status
-
-    OSD_NAME="OSD_${disk_name}"
-    $DOCKER_CMD stop ${OSD_NAME} > /dev/null 2>&1 && $DOCKER_CMD rm ${OSD_NAME} > /dev/null
-
-    container_id=$($DOCKER_CMD run -d --name=${OSD_NAME} --privileged=true --net=host --pid=host -v /dev:/dev -v /var/lib/ceph/osd/${disk_slot}_status:/status ${OSD_MEM} ${OSD_CPU_CORE} -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=/dev/${disk_name} -e OSD_TYPE=disk ${DAEMON_VERSION} osd | cut -c1-10 )
-    if [[ -z "${container_id}" ]]; then
-        log_err "failed to create ceph osd container on slot $disk_slot $disk_name"
-    else
-        echo "$disk_slot $disk_name $container_id" >> ${OSD_MAP_CONF}.tmp
-        log_success "create ceph osd container $container_id on slot $disk_slot $disk_name"
-    fi
+function build_osd () {
+  echo "build a osd."
 }
 
 function disk_mktable () {
@@ -502,89 +400,83 @@ function disk_mktable () {
     $DOCKER_CMD start $container_id > /dev/null
 }
 
-function restart_OSD () {
-    $DOCKER_CMD stop $container_id > /dev/null
-    sleep 1
-    echo "" > /var/lib/ceph/osd/${disk_slot}_status
-    $DOCKER_CMD start $container_id > /dev/null
+function disk_2_osd_id () {
+  # if $1 is /dev/sdx then search OSD container ID
+  if [ -z "$1" ]; then
+    return 1
+  elif echo "$1" | grep -q "^/dev/"; then
+    local SHORT_DEV_NAME=$(echo "$1" | sed 's/\/dev\///g')
+    # echo OSD_NAME
+    echo "OSD_${SHORT_DEV_NAME}"
+  else
+    echo ""
+  fi
 }
 
-function hotplug_OSD () {
+function is_osd_running () {
+  # check $1, /dev/sdx or container ID
+  if [ -z "$1" ]; then
+    log_err "is_osd_running () need to assign a OSD."
+    return 1
+  else
+    OSD_NAME=$(disk_2_osd_id $1)
+  fi
 
-    inotifywait -r -m /dev/ -e CREATE -e DELETE | while read dev_msg
-    do
-        dev_path=$(echo $dev_msg | awk '{print $1}')
-        action=$(echo $dev_msg | awk '{print $2}')
-        disk_name=$(echo $dev_msg | awk '{print $3}')
-
-        if [[ "$dev_path" == "/dev/" && $disk_name =~ ^[a-z]*$ ]]; then
-            log_info "$dev_msg"
-            if [[ "$action" ==  "CREATE"  && -b "/dev/$disk_name" ]]; then
-                while [ -e /tmp/osd_lock ]; do
-                    log_info "lock!" && sleep 5
-                done
-
-                echo "lock" > /tmp/osd_lock
-                build_osd
-                rm /tmp/osd_lock
-            fi
-
-            if [ "$action" ==  "DELETE" ]; then        
-                if is_container_running OSD_$disk_name; then
-                    log_info "stop OSD_$disk_name container"
-                    $DOCKER_CMD stop OSD_$disk_name && $DOCKER_CMD rm -f OSD_$disk_name >/dev/null
-                fi
-            fi
-        fi
-
-    done
+  if ${DOCKER_CMD} exec "${OSD_NAME}" true &>/dev/null; then
+    return 0
+  else
+    return 1
+  fi
 }
 
-function is_container_running () {
-    local status=$($DOCKER_CMD inspect -f '{{.State.Running}}' $1 2>/dev/null) || true
-    case $status in
-        true)
-            return 0
-            ;;
-        false)
-            return 1
-            ;;
-        *)
-            log_warn "Fail to check State of container: $1"
-            return 2
-            ;;
-    esac
+function is_osd_correct() {
+  if [ -z "$1" ]; then
+    log_err "is_osd_running () need to assign a OSD."
+    return 1
+  else
+    disk2verify=$1
+  fi
+
+  # FIXME: Find OSD data partition eg. /dev/sda => /dev/sda1
+  # OSD_FOLDER: find /var/lib/ceph/osd/ceph-3 from df, we need the OSD_ID like 3
+  disk2verify="${disk2verify}1"
+  if ceph-disk --setuser ceph --setgroup disk activate ${disk2verify} &>/dev/null; then
+    OSD_FOLDER=$(df | grep "${disk2verify}")
+    umount ${disk2verify}
+    return 0
+  else
+    return 1
+  fi
 }
 
 function is_osd_disk() {
-    # Check label partition table includes "ceph journal" or not
-    if parted -s $1 print 2>/dev/null | egrep -sq '^ 1.*ceph data' ; then
-        echo "true"
-    else
-        echo "false"
-    fi
-
+  # Check label partition table includes "ceph journal" or not
+  if parted -s $1 print 2>/dev/null | egrep -sq '^ 1.*ceph data' ; then
+    echo "true"
+  else
+    echo "false"
+  fi
 }
 
 # Find a disk not only unmounted but also non-ceph disks
 function get_avail_disk() {
-    BLOCKS=$(readlink /sys/class/block/* -e | sed -n "s/\(.*ata[0-9]\{,2\}\).*\/\(sd[a-z]\)$/\2/p")
-    [[ -n "${BLOCKS}" ]] || ( echo "" ; return 1 )
+  BLOCKS=$(readlink /sys/class/block/* -e | sed -n "s/\(.*ata[0-9]\{,2\}\).*\/\(sd[a-z]\)$/\2/p")
+  [[ -n "${BLOCKS}" ]] || ( echo "" ; return 1 )
 
-    while read disk ; do
-        # Double check it
-        if ! lsblk /dev/${disk} > /dev/null 2>&1; then
-            echo "Disk ${disk} is not a valid block device"
-            continue
-        fi
+  while read disk ; do
+    # Double check it
+    if ! lsblk /dev/${disk} > /dev/null 2>&1; then
+      echo "Disk ${disk} is not a valid block device"
+      continue
+    fi
 
-        if [[ -z "$(lsblk /dev/${disk} -no MOUNTPOINT)" &&
-            "$(lsblk /dev/${disk}1 -no PARTLABEL 2>/dev/null)" != "ceph data" ]]; then
-            # Find it
-            echo "/dev/${disk}"
-        fi
-    done < <(echo "$BLOCKS")
+    if [[ -z "$(lsblk /dev/${disk} -no MOUNTPOINT)" &&
+      "$(lsblk /dev/${disk}1 -no PARTLABEL 2>/dev/null)" != "ceph data" ]]; then
+      # Find it
+      echo "/dev/${disk}"
+    fi
+  done < <(echo "$BLOCKS")
 
-    # No available disk
-    echo ""
+  # No available disk
+  echo ""
 }
