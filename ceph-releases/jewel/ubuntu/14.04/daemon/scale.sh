@@ -555,3 +555,37 @@ function is_container_running () {
             ;;
     esac
 }
+
+function is_osd_disk() {
+    # Check label partition table includes "ceph journal" or not
+    sudo parted -s $1 print 2>/dev/null | grep -wq "ceph journal"
+
+    # return 0: OSD disk
+    # return 1: Non-OSD disk
+    return $?
+}
+
+# Find a disk not only unmounted but also non-ceph disks
+function get_avail_disk() {
+    BLOCKS=$(readlink /sys/class/block/* -e | sed -n "s/\(.*ata[0-9]\{,2\}\).*\/\(sd[a-z]\)$/\2/p")
+    [[ -n "${BLOCKS}" ]] || ( echo "" ; return 1 )
+
+    while read disk ; do
+        # Double check it
+        if ! lsblk /dev/${disk} > /dev/null 2>&1; then
+            echo "Disk ${disk} is not a valid block device"
+            continue
+        fi
+
+        if [[ -z "$(lsblk /dev/${disk} -no MOUNTPOINT)" &&
+            "$(sudo lsblk /dev/${disk}2 -no PARTLABEL 2>/dev/null)" != "ceph journal" ]]; then
+            #  Find it
+            echo "/dev/${disk}"
+            return 0
+        fi
+    done < <(echo "$BLOCKS")
+
+    # No available disk
+    echo ""
+    return 1
+}
