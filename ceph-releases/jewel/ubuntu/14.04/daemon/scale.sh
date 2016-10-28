@@ -558,11 +558,12 @@ function is_container_running () {
 
 function is_osd_disk() {
     # Check label partition table includes "ceph journal" or not
-    sudo parted -s $1 print 2>/dev/null | grep -wq "ceph journal"
+    if parted -s $1 print 2>/dev/null | egrep -sq '^ 1.*ceph data' ; then
+        echo "true"
+    else
+        echo "false"
+    fi
 
-    # return 0: OSD disk
-    # return 1: Non-OSD disk
-    return $?
 }
 
 # Find a disk not only unmounted but also non-ceph disks
@@ -578,14 +579,12 @@ function get_avail_disk() {
         fi
 
         if [[ -z "$(lsblk /dev/${disk} -no MOUNTPOINT)" &&
-            "$(sudo lsblk /dev/${disk}2 -no PARTLABEL 2>/dev/null)" != "ceph journal" ]]; then
-            #  Find it
+            "$(lsblk /dev/${disk}1 -no PARTLABEL 2>/dev/null)" != "ceph data" ]]; then
+            # Find it
             echo "/dev/${disk}"
-            return 0
         fi
     done < <(echo "$BLOCKS")
 
     # No available disk
     echo ""
-    return 1
 }
