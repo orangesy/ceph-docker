@@ -1101,7 +1101,8 @@ case "$CEPH_DAEMON" in
     mon_controller
     ;;
   add_osd)
-    add_new_osd
+    osd_controller_env
+    add_new_osd $2
     ;;
   snapshot)
     rbd_snapshot

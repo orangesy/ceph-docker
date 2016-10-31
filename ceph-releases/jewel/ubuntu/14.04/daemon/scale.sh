@@ -305,11 +305,7 @@ function set_pg_num () {
 
 # setup/check require option and tool
 function osd_controller_env () {
-  command -v jq > /dev/null 2>&1 || { echo "Command not found: jq"; exit 1; }
   command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
-  command -v lspci > /dev/null 2>&1 || { echo "Command not found: lspci"; exit 1; }
-  JQ_CMD=$(command -v jq)
-  JQ_CMD=$(which jq)
   DOCKER_CMD=$(command -v docker)
   DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
   # show docker version and check docker libraries load status
@@ -320,7 +316,7 @@ function osd_controller_env () {
     exit 1
   fi
 
-  : ${OSD_DIR:="/var/lib/ceph/osd"}
+  : ${OSD_FOLDER:="/var/lib/ceph/osd"}
   if [ -n "${OSD_MEM}" ]; then OSD_MEM="-m ${OSD_MEM}"; fi
   if [ -n "${OSD_CPU_CORE}" ]; then OSD_CPU_CORE="-c ${OSD_CPU_CORE}"; fi
 }
@@ -339,7 +335,7 @@ function osd_controller_init () {
 
   for disk in ${DISKS}; do
     if [ "$(is_osd_disk ${disk})" == "true" ]; then
-      check_run_osd $disk
+      activate_osd $disk
     fi
   done
 
@@ -349,31 +345,22 @@ function osd_controller_init () {
   fi
 }
 
-function check_run_osd () {
-  if [ -z "$1" ]; then
-    log_err "check_run_osd () need to assign a disk."
-    return 1
-  else
-    local disk2add=$1
-  fi
-
-  # IF OSD isn't running? Then we can begin to check which cluster the OSD belong to.
-  if is_osd_running ${disk2add}; then
-    BUILD_FIRST_OSD=false
-    log_success "${disk2add} is running as OSD."
-  elif ! is_osd_correct ${disk2add}; then
-    log_warn "The OSD disk ${disk2add} isn't from current Ceph cluster."
-  else
-    activate_osd ${disk2add}
-  fi
-}
-
 function activate_osd () {
   if [ -z "$1" ]; then
     log_err "activate_osd () need to assign a OSD."
     return 1
   else
     local disk2act=$1
+  fi
+
+  # if OSD is running or come from another cluster, then return 0.
+  if is_osd_running ${disk2act}; then
+    BUILD_FIRST_OSD=false
+    log_success "${disk2act} is running as OSD."
+    return 0
+  elif ! is_osd_correct ${disk2act}; then
+    log_warn "The OSD disk ${disk2add} isn't from current Ceph cluster."
+    return 0
   fi
 
   OSD_NAME=$(disk_2_osd_id ${disk2act})
@@ -422,9 +409,11 @@ function add_new_osd () {
 }
 
 function prepare_new_osd () {
-  if $DOCKER_CMD run --privileged=true -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=$1 -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd >/dev/null; then
+  if $DOCKER_CMD run --privileged=true -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=$1 -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
+    log_success "Success to prepare $1"
     return 0
   else
+    log_err "Fail to prepare $1."
     return 1
   fi
 }
@@ -466,7 +455,7 @@ function is_osd_running () {
 
 function is_osd_correct() {
   if [ -z "$1" ]; then
-    log_err "is_osd_running () need to assign a OSD."
+    log_err "is_osd_correct () need to assign a OSD."
     return 1
   else
     disk2verify=$1
@@ -518,24 +507,20 @@ function get_avail_disk() {
 
 function hotplug_OSD () {
   inotifywait -r -m /dev/ -e CREATE -e DELETE | while read dev_msg; do
-    dev_path=$(echo $dev_msg | awk '{print $1}')
-    action=$(echo $dev_msg | awk '{print $2}')
-    disk_short_name=$(echo $dev_msg | awk '{print $3}')
+    local disk_name=$(echo $dev_msg | awk '{print $1$3}')
+    local action=$(echo $dev_msg | awk '{print $2}')
 
-    # XXX: check disk2add is a block
-    if [[ "${dev_path}" == "/dev/" && ${disk_short_name} =~ ^[a-z]*$ ]]; then
-      local disk2add="${dev_path}${disk_short_name}"
-      OSD_NAME=$(disk_2_osd_id ${disk2add})
-
+    if [[ "${disk_name}" =~ /dev/sd[a-z]$ ]] && is_osd_disk ${disk_name}; then
+      OSD_NAME=$(disk_2_osd_id ${disk_name})
       case ${action} in
         CREATE)
-          log_info "activate ${disk2add}"
-          activate_osd "${disk2add}"
+          log_info "activate ${disk_name}"
+          activate_osd "${disk_name}"
           ;;
         DELETE)
-          log_info "stop ${disk2add}"
-          ${DOCKER_CMD} stop ${OSD_NAME}
-          ${DOCKER_CMD} rm ${OSD_NAME}
+          log_info "stop ${disk_name}"
+          ${DOCKER_CMD} stop ${OSD_NAME} >/dev/null
+          ${DOCKER_CMD} rm ${OSD_NAME} >/dev/null || true
           ;;
         *)
           ;;
