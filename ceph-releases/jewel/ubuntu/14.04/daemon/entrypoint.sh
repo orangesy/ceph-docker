@@ -963,9 +963,9 @@ done
 }
 
 
-##############
-# build_osd  #
-##############
+##################
+# OSD_CONTROLLER #
+##################
 
 function osd_controller () {
   start_config
@@ -973,6 +973,7 @@ function osd_controller () {
   osd_controller_env
   osd_controller_init
   auto_change_crush
+  hotplug_OSD
 }
 
 
@@ -1098,6 +1099,9 @@ case "$CEPH_DAEMON" in
     ;;
   mon_controller)
     mon_controller
+    ;;
+  add_osd)
+    add_new_osd
     ;;
   snapshot)
     rbd_snapshot
