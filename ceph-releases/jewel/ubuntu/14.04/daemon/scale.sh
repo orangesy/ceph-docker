@@ -305,6 +305,7 @@ function set_pg_num () {
 
 # setup/check require option and tool
 function osd_controller_env () {
+  : ${CLUSTER_PATH:=ceph-config/${CLUSTER}}
   command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
   DOCKER_CMD=$(command -v docker)
   DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
@@ -466,11 +467,10 @@ function is_osd_correct() {
     disk2verify=$1
   fi
 
-  # FIXME: Find OSD data partition eg. /dev/sda => /dev/sda1
-  # OSD_FOLDER: find /var/lib/ceph/osd/ceph-3 from df, we need the OSD_ID like 3
+  # FIXME: Find OSD data partition & JOURNAL partition
   disk2verify="${disk2verify}1"
   if ceph-disk --setuser ceph --setgroup disk activate ${disk2verify} &>/dev/null; then
-    OSD_FOLDER=$(df | grep "${disk2verify}")
+    OSD_ID=$(df | grep "${disk2verify}" | sed "s/.${CLUSTER}//g")
     umount ${disk2verify}
     return 0
   else
