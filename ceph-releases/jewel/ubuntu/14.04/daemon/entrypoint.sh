@@ -458,15 +458,15 @@ exec /usr/local/bin/forego start -f /etc/forego/${CLUSTER}/Procfile
 function osd_disk_prepare {
   if [[ -z "${OSD_DEVICE}" ]];then
     echo "ERROR- You must provide a device to build your OSD ie: /dev/sdb"
-    err_status "DEVICE_NOT_FOUND"
+    exit 1
   fi
 
   if [ ! -e /var/lib/ceph/bootstrap-osd/${CLUSTER}.keyring ]; then
     echo "ERROR- /var/lib/ceph/bootstrap-osd/${CLUSTER}.keyring must exist. You can extract it from your current monitor by running 'ceph auth get client.bootstrap-osd -o /var/lib/ceph/bootstrap-osd/${CLUSTER}.keyring'"
-    err_status "BOOTSTRAP_OSD_KEY"
+    exit 1
   fi
 
-  timeout 10 ceph ${CEPH_OPTS} --name client.bootstrap-osd --keyring /var/lib/ceph/bootstrap-osd/${CLUSTER}.keyring health || err_status "CLUSTER_LOST_CON"
+  timeout 10 ceph ${CEPH_OPTS} --name client.bootstrap-osd --keyring /var/lib/ceph/bootstrap-osd/${CLUSTER}.keyring health || exit 1
 
   mkdir -p /var/lib/ceph/osd
   chown ceph. /var/lib/ceph/osd
@@ -477,37 +477,36 @@ function osd_disk_prepare {
   if [[ "$(parted --script ${OSD_DEVICE} print | egrep '^ 1.*ceph data')" && ${OSD_FORCE_ZAP} -ne "1" ]]; then
     echo "ERROR- It looks like ${OSD_DEVICE} is an OSD, set OSD_FORCE_ZAP=1 to use this device anyway and zap its content"
     echo "You can also use the zap_device scenario on the appropriate device to zap it"
-    success_status "Found_OSD"
-    return 0
+    exit 1
   elif [[ "$(parted --script ${OSD_DEVICE} print | egrep '^ 1.*ceph data')" && ${OSD_FORCE_ZAP} -eq "1" ]]; then
     echo "It looks like ${OSD_DEVICE} is an OSD, however OSD_FORCE_ZAP is enabled so we are zapping the device anyway"
-    ceph-disk -v zap ${OSD_DEVICE} || err_status "ZAP_ERR"
+    ceph-disk -v zap ${OSD_DEVICE}
   fi
 
   if [[ ! -z "${OSD_JOURNAL}" ]]; then
     if [[ ${OSD_BLUESTORE} -eq 1 ]]; then
-      ceph-disk -v prepare ${CEPH_OPTS} --bluestore ${OSD_DEVICE} ${OSD_JOURNAL} && success_status "Prepare_Success" || err_status "PREPARE_ERR"
+      ceph-disk -v prepare ${CEPH_OPTS} --bluestore ${OSD_DEVICE} ${OSD_JOURNAL}
     elif [[ ${OSD_DMCRYPT} -eq 1 ]]; then
       get_admin_key
       check_admin_key
       # the admin key must be present on the node
       # in order to store the encrypted key in the monitor's k/v store
-      ceph-disk -v prepare ${CEPH_OPTS} --dmcrypt ${OSD_DEVICE} ${OSD_JOURNAL} && success_status "Prepare_Success" || err_status "PREPARE_ERR"
+      ceph-disk -v prepare ${CEPH_OPTS} --dmcrypt ${OSD_DEVICE} ${OSD_JOURNAL}
     else
-      ceph-disk -v prepare ${CEPH_OPTS} ${OSD_DEVICE} ${OSD_JOURNAL} && success_status "Prepare_Success" || err_status "PREPARE_ERR"
+      ceph-disk -v prepare ${CEPH_OPTS} ${OSD_DEVICE} ${OSD_JOURNAL}
     fi
     chown ceph. ${OSD_JOURNAL}
   else
     if [[ ${OSD_BLUESTORE} -eq 1 ]]; then
-      ceph-disk -v prepare ${CEPH_OPTS} --bluestore ${OSD_DEVICE} && success_status "Prepare_Success" || err_status "PREPARE_ERR"
+      ceph-disk -v prepare ${CEPH_OPTS} --bluestore ${OSD_DEVICE}
     elif [[ ${OSD_DMCRYPT} -eq 1 ]]; then
       get_admin_key
       check_admin_key
       # the admin key must be present on the node
       # in order to store the encrypted key in the monitor's k/v store
-      ceph-disk -v prepare ${CEPH_OPTS} --dmcrypt ${OSD_DEVICE} && success_status "Prepare_Success" || err_status "PREPARE_ERR"
+      ceph-disk -v prepare ${CEPH_OPTS} --dmcrypt ${OSD_DEVICE}
     else
-      ceph-disk -v prepare ${CEPH_OPTS} ${OSD_DEVICE} && success_status "Prepare_Success" || err_status "PREPARE_ERR"
+      ceph-disk -v prepare ${CEPH_OPTS} ${OSD_DEVICE}
     fi
     chown ceph. $(dev_part ${OSD_DEVICE} 2)
   fi
@@ -530,7 +529,7 @@ function osd_disk {
 function osd_activate {
   if [[ -z "${OSD_DEVICE}" ]];then
     echo "ERROR- You must provide a device to build your OSD ie: /dev/sdb"
-    err_status "DEVICE_NOT_FOUND"
+    exit 1
   fi
 
   mkdir -p /var/lib/ceph/osd
@@ -539,31 +538,30 @@ function osd_activate {
   ACTUAL_OSD_DEVICE=$(readlink -f ${OSD_DEVICE})
   # wait till partition exists then activate it
   if [[ ! -z "${OSD_JOURNAL}" ]]; then
-    timeout 10  bash -c "while [ ! -e ${OSD_DEVICE} ]; do sleep 1; done" || err_status "OSD_PART_NOT_FOUND"
+    timeout 10  bash -c "while [ ! -e ${OSD_DEVICE} ]; do sleep 1; done"
     chown ceph. ${OSD_JOURNAL}
     if [[ ${OSD_DMCRYPT} -eq 1 ]]; then
-      ceph-disk -v --setuser ceph --setgroup --dmcrypt disk activate $(dev_part ${OSD_DEVICE} 1) && success_status "Activate_Success" || err_status "ACTIVATE_ERR"
+      ceph-disk -v --setuser ceph --setgroup --dmcrypt disk activate $(dev_part ${OSD_DEVICE} 1)
     else
-      ceph-disk -v --setuser ceph --setgroup disk activate $(dev_part ${OSD_DEVICE} 1) && success_status "Activate_Success" || err_status "ACTIVATE_ERR"
+      ceph-disk -v --setuser ceph --setgroup disk activate $(dev_part ${OSD_DEVICE} 1)
     fi
     OSD_ID=$(ceph-disk list | grep "$(dev_part ${ACTUAL_OSD_DEVICE} 1) ceph data" | awk -F, '{print $4}' | awk -F. '{print $2}')
   else
-    timeout 10  bash -c "while [ ! -e $(dev_part ${OSD_DEVICE} 1) ]; do sleep 1; done" || err_status "OSD_PART_NOT_FOUND"
+    timeout 10  bash -c "while [ ! -e $(dev_part ${OSD_DEVICE} 1) ]; do sleep 1; done"
     chown ceph. $(dev_part ${OSD_DEVICE} 2)
     if [[ ${OSD_DMCRYPT} -eq 1 ]]; then
-      ceph-disk -v --setuser ceph --setgroup disk --dmcrypt activate $(dev_part ${OSD_DEVICE} 1) && success_status "Activate_Success" || err_status "ACTIVATE_ERR"
+      ceph-disk -v --setuser ceph --setgroup disk --dmcrypt activate $(dev_part ${OSD_DEVICE} 1)
     else
-      ceph-disk -v --setuser ceph --setgroup disk activate $(dev_part ${OSD_DEVICE} 1) && success_status "Activate_Success" || err_status "ACTIVATE_ERR"
+      ceph-disk -v --setuser ceph --setgroup disk activate $(dev_part ${OSD_DEVICE} 1)
     fi
     OSD_ID=$(ceph-disk list | grep "$(dev_part ${ACTUAL_OSD_DEVICE} 1) ceph data" | awk -F, '{print $4}' | awk -F. '{print $2}')
   fi
   OSD_WEIGHT=$(df -P -k /var/lib/ceph/osd/${CLUSTER}-$OSD_ID/ | tail -1 | awk '{ d= $2/1073741824 ; r = sprintf("%.2f", d); print r }')
-  ceph ${CEPH_OPTS} --name=osd.${OSD_ID} --keyring=/var/lib/ceph/osd/${CLUSTER}-${OSD_ID}/keyring osd crush create-or-move -- ${OSD_ID} ${OSD_WEIGHT} ${CRUSH_LOCATION} || err_status "WRONG_OSD_KEY"
+  ceph ${CEPH_OPTS} --name=osd.${OSD_ID} --keyring=/var/lib/ceph/osd/${CLUSTER}-${OSD_ID}/keyring osd crush create-or-move -- ${OSD_ID} ${OSD_WEIGHT} ${CRUSH_LOCATION}
 
   # ceph-disk activiate has exec'ed /usr/bin/ceph-osd ${CEPH_OPTS} -f -d -i ${OSD_ID}
   # wait till docker stop or ceph-osd is killed
   OSD_PID=$(pgrep -U ceph -f "^/usr/bin/ceph-osd \-\-cluster ${CLUSTER}.*\-i ${OSD_ID} \-\-setuser") || true
-  success_status "Ready_2_run_ceph_osd"
   if [ -n "${OSD_PID}" ]; then
       echo "OSD (PID ${OSD_PID}) is running, waiting till it exits"
       while [ -e /proc/${OSD_PID} ]; do sleep 1;done
@@ -1103,6 +1101,7 @@ case "$CEPH_DAEMON" in
   add_osd)
     osd_controller_env
     add_new_osd $2
+    auto_change_crush
     ;;
   snapshot)
     rbd_snapshot

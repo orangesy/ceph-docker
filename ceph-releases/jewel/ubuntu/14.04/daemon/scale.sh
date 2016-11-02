@@ -205,7 +205,7 @@ function auto_change_crush () {
   done
 
   # NODES not include some host weight=0
-  NODEs=$(ceph ${CEPH_OPTS} osd tree | awk '/host/ { print $2 }' | grep -v ^0$ -c)
+  NODEs=$(ceph ${CEPH_OPTS} osd tree | awk '/host/ { print $2 }' | grep -v ^0$ -c || true)
   # Only count OSD that status is up
   OSDs=$(ceph ${CEPH_OPTS} osd stat | awk '{ print $5 }')
   # Put crush type into ETCD
@@ -305,6 +305,7 @@ function set_pg_num () {
 
 # setup/check require option and tool
 function osd_controller_env () {
+  : ${CLUSTER_PATH:=ceph-config/${CLUSTER}}
   command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
   DOCKER_CMD=$(command -v docker)
   DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
@@ -329,7 +330,7 @@ function osd_controller_init () {
   DISKS=$(get_avail_disk)
 
   if [ -z "${DISKS}" ]; then
-    log_err "No Disks"
+    log_err "No available disk"
     return 0
   fi
 
@@ -359,7 +360,7 @@ function activate_osd () {
     log_success "${disk2act} is running as OSD."
     return 0
   elif ! is_osd_correct ${disk2act}; then
-    log_warn "The OSD disk ${disk2add} isn't from current Ceph cluster."
+    log_warn "The OSD disk ${disk2act} isn't from current Ceph cluster."
     return 0
   fi
 
@@ -386,7 +387,7 @@ function add_new_osd () {
   DISKS=$(get_avail_disk)
 
   if [ -z "${DISKS}" ]; then
-    log_warn "No usable disk to add new OSD."
+    log_warn "No available disk for adding a new OSD."
     return 0
   fi
 
@@ -401,19 +402,24 @@ function add_new_osd () {
 
   for disk in ${osd2add}; do
     if ! prepare_new_osd ${disk}; then
-      log_err "${disk} fail to prepare."
+      log_err "OSD ${disk} fail to prepare."
     elif ! activate_osd ${disk}; then
-      log_err "${disk} fail to activate."
+      log_err "OSD ${disk} fail to activate."
     fi
   done
 }
 
 function prepare_new_osd () {
-  if $DOCKER_CMD run --privileged=true -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=$1 -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
-    log_success "Success to prepare $1"
+  if [ -z "$1" ]; then
+    log_err "prepare_new_osd need to assign a disk."
+    return 1
+  else
+    local osd2prepare=$1
+  fi
+  local prepare_id="$(disk_2_osd_id ${osd2prepare})_prepare_$(date +%N)"
+  if $DOCKER_CMD run --privileged=true --name=${prepare_id} -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=${osd2prepare} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
     return 0
   else
-    log_err "Fail to prepare $1."
     return 1
   fi
 }
@@ -461,11 +467,10 @@ function is_osd_correct() {
     disk2verify=$1
   fi
 
-  # FIXME: Find OSD data partition eg. /dev/sda => /dev/sda1
-  # OSD_FOLDER: find /var/lib/ceph/osd/ceph-3 from df, we need the OSD_ID like 3
+  # FIXME: Find OSD data partition & JOURNAL partition
   disk2verify="${disk2verify}1"
   if ceph-disk --setuser ceph --setgroup disk activate ${disk2verify} &>/dev/null; then
-    OSD_FOLDER=$(df | grep "${disk2verify}")
+    OSD_ID=$(df | grep "${disk2verify}" | sed "s/.${CLUSTER}//g")
     umount ${disk2verify}
     return 0
   else
@@ -514,13 +519,14 @@ function hotplug_OSD () {
       OSD_NAME=$(disk_2_osd_id ${disk_name})
       case ${action} in
         CREATE)
-          log_info "activate ${disk_name}"
+          log_info "Add ${disk_name}"
           activate_osd "${disk_name}"
           ;;
         DELETE)
-          log_info "stop ${disk_name}"
-          ${DOCKER_CMD} stop ${OSD_NAME} >/dev/null
-          ${DOCKER_CMD} rm ${OSD_NAME} >/dev/null || true
+          log_info "Remove ${disk_name}"
+          if is_osd_running ${disk_name}; then
+            ${DOCKER_CMD} stop ${OSD_NAME} >/dev/null && ${DOCKER_CMD} rm ${OSD_NAME} >/dev/null
+          fi
           ;;
         *)
           ;;

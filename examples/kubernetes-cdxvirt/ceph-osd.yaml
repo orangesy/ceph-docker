@@ -19,9 +19,6 @@ spec:
         - name: docker-sock
           hostPath:
             path: /var/run/docker.sock
-        - name: ceph-dir
-          hostPath:
-            path: /var/lib/ceph/
         - name: libsystemd
           hostPath:
             path: /lib64/libsystemd.so.0
@@ -40,9 +37,6 @@ spec:
         - name: localtime
           hostPath:
             path: /etc/localtime
-        - name: host-config
-          hostPath:
-            path: /opt/etc/
       containers:
         - name: ceph-osd-pod
           image: cdxvirt/ceph-daemon:latest
@@ -67,8 +61,6 @@ spec:
               mountPath: /bin/docker
             - name: docker-sock
               mountPath: /var/run/docker.sock
-            - name: ceph-dir
-              mountPath: /var/lib/ceph/
             - name: libsystemd
               mountPath: /lib/x86_64-linux-gnu/libsystemd.so.0
             - name: libdevmapper
@@ -81,5 +73,3 @@ spec:
               mountPath: /dev/
             - name: localtime
               mountPath: /etc/localtime
-            - name: host-config
-              mountPath: /opt/etc
