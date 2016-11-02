@@ -205,7 +205,7 @@ function auto_change_crush () {
   done
 
   # NODES not include some host weight=0
-  NODEs=$(ceph ${CEPH_OPTS} osd tree | awk '/host/ { print $2 }' | grep -v ^0$ -c)
+  NODEs=$(ceph ${CEPH_OPTS} osd tree | awk '/host/ { print $2 }' | grep -v ^0$ -c || true)
   # Only count OSD that status is up
   OSDs=$(ceph ${CEPH_OPTS} osd stat | awk '{ print $5 }')
   # Put crush type into ETCD
