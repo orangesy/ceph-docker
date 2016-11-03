@@ -318,6 +318,8 @@ function osd_controller_env () {
   fi
 
   : ${OSD_FOLDER:="/var/lib/ceph/osd"}
+  mkdir -p ${OSD_FOLDER}
+  chown ceph. ${OSD_FOLDER}
   if [ -n "${OSD_MEM}" ]; then OSD_MEM="-m ${OSD_MEM}"; fi
   if [ -n "${OSD_CPU_CORE}" ]; then OSD_CPU_CORE="-c ${OSD_CPU_CORE}"; fi
 }
@@ -360,7 +362,7 @@ function activate_osd () {
     log_success "${disk2act} is running as OSD."
     return 0
   elif ! is_osd_correct ${disk2act}; then
-    log_warn "The OSD disk ${disk2act} isn't from current Ceph cluster."
+    log_warn "The OSD disk ${disk2act} isn't correct for current Ceph cluster."
     return 0
   fi
 
