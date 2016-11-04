@@ -419,6 +419,7 @@ function prepare_new_osd () {
     local osd2prepare=$1
   fi
   local prepare_id="$(disk_2_osd_id ${osd2prepare})_prepare_$(date +%N)"
+  sgdisk --zap-all --clear --mbrtogpt ${osd2prepare}
   if $DOCKER_CMD run --privileged=true --name=${prepare_id} -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=${osd2prepare} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
     return 0
   else
