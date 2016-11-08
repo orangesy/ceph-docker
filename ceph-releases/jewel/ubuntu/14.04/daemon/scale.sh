@@ -393,6 +393,10 @@ function add_new_osd () {
     return 0
   fi
 
+  # clear lvm & raid
+  clear_lvs_disks
+  clear_raid_disks
+
   COUNTER=0
   osd2add=""
   for disk in ${DISKS}; do
@@ -545,7 +549,7 @@ function clear_lvs_disks () {
     log_info "Find logic volumes, inactive them."
     for lv in $lvs
     do
-      lvremove -f -y "${lv//\'/}"
+      lvremove -f "${lv//\'/}"
     done
 
   fi
@@ -561,7 +565,7 @@ function clear_lvs_disks () {
   fi
 
 
-  pvs=$(pvscan -s | grep '/dev/sd[a-z].*')
+  pvs=$(pvscan -s | grep '/dev/sd[a-z].*' || true)
   if [ -n "$pvs" ]; then
     log_info "Find PVs, delete them."
     for pv in $pvs
