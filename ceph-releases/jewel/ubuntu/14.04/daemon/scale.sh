@@ -368,7 +368,7 @@ function activate_osd () {
 
   OSD_NAME=$(disk_2_osd_id ${disk2act})
   # XXX: auto find DAEMON_VERSION
-  osd_container=$($DOCKER_CMD run -d --name=${OSD_NAME} --privileged=true --net=host --pid=host -v /dev:/dev  ${OSD_MEM} ${OSD_CPU_CORE} -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=${disk2act} -e OSD_TYPE=activate ${DAEMON_VERSION} osd | cut -c 1-12)
+  osd_container=$($DOCKER_CMD run -d  -l CLUSTER=${CLUSTER} -l CEPH=osd --name=${OSD_NAME} --privileged=true --net=host --pid=host -v /dev:/dev  ${OSD_MEM} ${OSD_CPU_CORE} -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=${disk2act} -e OSD_TYPE=activate ${DAEMON_VERSION} osd | cut -c 1-12)
 
   # XXX: check OSD container status for few seconds
   if is_osd_running ${disk2act}; then
@@ -424,7 +424,7 @@ function prepare_new_osd () {
   fi
   local prepare_id="$(disk_2_osd_id ${osd2prepare})_prepare_$(date +%N)"
   sgdisk --zap-all --clear --mbrtogpt ${osd2prepare}
-  if $DOCKER_CMD run --privileged=true --name=${prepare_id} -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=${osd2prepare} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
+  if $DOCKER_CMD run --privileged=true -l CLUSTER=${CLUSTER} -l CEPH=osd_prepare--name=${prepare_id} -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=${osd2prepare} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
     return 0
   else
     return 1
