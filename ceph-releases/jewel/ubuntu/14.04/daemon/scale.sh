@@ -329,7 +329,7 @@ function osd_controller_init () {
   BUILD_FIRST_OSD=true
 
   # get all avail disks
-  DISKS=$(get_avail_disk)
+  DISKS=$(get_avail_disks)
 
   if [ -z "${DISKS}" ]; then
     log_err "No available disk"
@@ -386,7 +386,7 @@ function add_new_osd () {
   fi
 
   # find a usable disk and format it.
-  DISKS=$(get_avail_disk)
+  DISKS=$(get_avail_disks)
 
   if [ -z "${DISKS}" ]; then
     log_warn "No available disk for adding a new OSD."
@@ -489,15 +489,15 @@ function is_osd_disk() {
   fi
 }
 
-# Find a disk not only unmounted but also non-ceph disks
-function get_avail_disk() {
+# Find disks not only unmounted but also non-ceph disks
+function get_avail_disks () {
   BLOCKS=$(readlink /sys/class/block/* -e | sed -n "s/\(.*ata[0-9]\{,2\}\).*\/\(sd[a-z]\)$/\2/p")
   [[ -n "${BLOCKS}" ]] || ( echo "" ; return 1 )
 
   while read disk ; do
     # Double check it
     if ! lsblk /dev/${disk} > /dev/null 2>&1; then
-      echo "Disk ${disk} is not a valid block device"
+      log_warn "Disk ${disk} is not a valid block device"
       continue
     fi
 
@@ -508,7 +508,7 @@ function get_avail_disk() {
     fi
   done < <(echo "$BLOCKS")
 
-  # No available disk
+  # No available disks
   echo ""
 }
 
@@ -536,3 +536,64 @@ function hotplug_OSD () {
     fi
   done
 }
+# XXX: We suppose we don't need any lvs and raid disks at all and just delete them
+function clear_lvs_disks () {
+  lvs=$(lvscan | grep '/dev.*' | awk '{print $2}')
+
+  if [ -n "$lvs" ]; then
+    log_info "Find logic volumes, inactive them."
+    for lv in $lvs
+    do
+      lvremove -f -y "${lv//\'/}"
+    done
+
+  fi
+
+  vgs=$(vgdisplay -C --noheadings --separator '|' | cut -d '|' -f 1)
+  if [ -n "$vgs" ]; then
+    log_info "Find VGs, delete them."
+    for vg in $vgs
+    do
+      vgremove -f "$vg"
+    done
+
+  fi
+
+
+  pvs=$(pvscan -s | grep '/dev/sd[a-z].*')
+  if [ -n "$pvs" ]; then
+    log_info "Find PVs, delete them."
+    for pv in $pvs
+    do
+      pvremove -ff -y "$pv"
+    done
+
+  fi
+}
+
+function clear_raid_disks () {
+  mds=$(mdadm --detail --scan  | awk '{print $2}')
+
+  if [ -z "${mds}" ]; then
+    # Nothing to do
+    return 0
+  fi
+
+  for md in ${mds}
+  do
+    devs=$(mdadm --detail --export "${md}" | grep MD_DEVICE_.*_DEV | cut -d '=' -f 2)
+    if [ -z "$devs" ]; then
+      log_info "No invalid devices"
+      return 1
+    fi
+    mdadm --stop ${md}
+
+    for dev in ${devs}
+    do
+      log_info "Clear MD device: $dev"
+      mdadm --wait --zero-superblock --force "$dev"
+    done
+  done
+}
+
+
