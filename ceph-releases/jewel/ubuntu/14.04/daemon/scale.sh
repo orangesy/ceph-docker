@@ -324,7 +324,7 @@ function osd_controller_env () {
   if [ -n "${OSD_CPU_CORE}" ]; then OSD_CPU_CORE="-c ${OSD_CPU_CORE}"; fi
 }
 
-# Start OSDs they are ready to run. (existing osds)
+# Initialization, start OSDs they are ready to run.
 function osd_controller_init () {
   BUILD_FIRST_OSD=true
 
@@ -348,6 +348,10 @@ function osd_controller_init () {
   fi
 }
 
+function set_max_osd () {
+echo "aa"
+}
+
 function activate_osd () {
   if [ -z "$1" ]; then
     log_err "activate_osd () need to assign a OSD."
@@ -362,13 +366,16 @@ function activate_osd () {
     log_success "${disk2act} is running as OSD."
     return 0
   elif ! is_osd_correct ${disk2act}; then
-    log_warn "The OSD disk ${disk2act} isn't correct for current Ceph cluster."
+    log_warn "The OSD disk ${disk2act} unable to activate for current Ceph cluster."
     return 0
   fi
 
-  OSD_NAME=$(disk_2_osd_id ${disk2act})
+  local CONT_NAME=$(create_cont_name ${disk2act} ${OSD_ID})
   # XXX: auto find DAEMON_VERSION
-  osd_container=$($DOCKER_CMD run -d  -l CLUSTER=${CLUSTER} -l CEPH=osd --name=${OSD_NAME} --privileged=true --net=host --pid=host -v /dev:/dev  ${OSD_MEM} ${OSD_CPU_CORE} -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=${disk2act} -e OSD_TYPE=activate ${DAEMON_VERSION} osd | cut -c 1-12)
+  $DOCKER_CMD run -d -l CLUSTER=${CLUSTER} -l CEPH=osd -l DEV_NAME=${disk2act} -l OSD_ID=${OSD_ID} \
+    --name=${CONT_NAME} --privileged=true --net=host --pid=host -v /dev:/dev ${OSD_MEM} ${OSD_CPU_CORE} \
+    -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=${disk2act} \
+    -e OSD_TYPE=activate ${DAEMON_VERSION} osd
 
   # XXX: check OSD container status for few seconds
   if is_osd_running ${disk2act}; then
@@ -420,48 +427,62 @@ function prepare_new_osd () {
     log_err "prepare_new_osd need to assign a disk."
     return 1
   else
-    local osd2prepare=$1
+    local osd2prep=$1
   fi
-  local prepare_id="$(disk_2_osd_id ${osd2prepare})_prepare_$(date +%N)"
-  sgdisk --zap-all --clear --mbrtogpt ${osd2prepare}
-  if $DOCKER_CMD run --privileged=true -l CLUSTER=${CLUSTER} -l CEPH=osd_prepare--name=${prepare_id} -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=${osd2prepare} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
+  local CONT_NAME="$(create_cont_name ${osd2prep})_prepare_$(date +%N)"
+  sgdisk --zap-all --clear --mbrtogpt ${osd2prep}
+  if $DOCKER_CMD run -l CLUSTER=${CLUSTER} -l CEPH=osd_prepare -l DEV_NAME=osd2prep --name=${CONT_NAME} \
+    --privileged=true -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare \
+    -e OSD_DEVICE=${osd2prep} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
     return 0
   else
     return 1
   fi
 }
 
-function disk_2_osd_id () {
-  # if $1 is /dev/sdx then search OSD container ID
-  if [ -z "$1" ]; then
+function create_cont_name () {
+  # usage: create_cont_name DEV_PATH OSD_ID, e.g. create_cont_name /dev/sda 12 => OSD_12_sda
+  if [ $# -ne 2 ] && [ $# -ne 1 ]; then
+    log_err "create_cont_name DEV_PATH OSD_ID"
     return 1
-  elif echo "$1" | grep -q "^/dev/"; then
+  fi
+  if echo "$1" | grep -q "^/dev/"; then
     local SHORT_DEV_NAME=$(echo "$1" | sed 's/\/dev\///g')
-    # echo OSD_NAME
+  else
+    local SHORT_DEV_NAME=""
+  fi
+
+  if [ -z "${SHORT_DEV_NAME}" ] && [ -z "$2" ]; then
+    echo "OSD"
+  elif [ -z "${SHORT_DEV_NAME}" ]; then
+    echo "OSD_$2"
+  elif [ -z "$2" ]; then
     echo "OSD_${SHORT_DEV_NAME}"
   else
-    echo ""
+    echo "OSD_$2_${SHORT_DEV_NAME}"
   fi
 }
 
 function is_osd_running () {
-  # convert disk name to OSD container ID.
+  # give a disk and check OSD container
   if [ -z "$1" ]; then
     log_err "is_osd_running () need to assign a OSD."
     return 1
   else
-    OSD_NAME=$(disk_2_osd_id $1)
+    local DEV_NAME=$1
   fi
 
-  local state_running=$(${DOCKER_CMD} inspect -f '{{.State.Running}}' ${OSD_NAME} 2>/dev/null)
-  if [ -z "${state_running}" ]; then
-    return 1
-  elif [ "${state_running}" == "false" ]; then
-    ${DOCKER_CMD} rm ${OSD_NAME} >/dev/null
-    return 1
-  elif [ "${state_running}" == "true" ]; then
+  # check running & exited containers
+  local CONT_ID=$(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${DEV_NAME})
+  if [ -n "${CONT_ID}" ]; then
     return 0
   else
+    local CONT_ID=$(${DOCKER_CMD} ps -aq -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${DEV_NAME})
+  fi
+  if [ -z "${CONT_ID}" ]; then
+    return 1
+  else
+    ${DOCKER_CMD} rm "${CONT_ID}"
     return 1
   fi
 }
@@ -471,16 +492,19 @@ function is_osd_correct() {
     log_err "is_osd_correct () need to assign a OSD."
     return 1
   else
+    # FIXME: disk2verify is a variable ti find ceph data JOURNAL partition.
     disk2verify=$1
   fi
 
-  # FIXME: Find OSD data partition & JOURNAL partition
+  # XXX: OSD_ID we want to find osd id from osd mounted folder
   disk2verify="${disk2verify}1"
   if ceph-disk --setuser ceph --setgroup disk activate ${disk2verify} &>/dev/null; then
-    OSD_ID=$(df | grep "${disk2verify}" | sed "s/.${CLUSTER}//g")
+    OSD_ID=$(df | grep "${disk2verify}" | sed "s/.*${CLUSTER}-//g")
     umount ${disk2verify}
     return 0
   else
+    OSD_ID=""
+    umount ${disk2verify} &>dev/null || true
     return 1
   fi
 }
@@ -519,20 +543,23 @@ function get_avail_disks () {
 
 function hotplug_OSD () {
   inotifywait -r -m /dev/ -e CREATE -e DELETE | while read dev_msg; do
-    local disk_name=$(echo $dev_msg | awk '{print $1$3}')
+    local hotplug_disk=$(echo $dev_msg | awk '{print $1$3}')
     local action=$(echo $dev_msg | awk '{print $2}')
 
-    if [[ "${disk_name}" =~ /dev/sd[a-z]$ ]] && is_osd_disk ${disk_name}; then
-      OSD_NAME=$(disk_2_osd_id ${disk_name})
+    if [[ "${hotplug_disk}" =~ /dev/sd[a-z]$ ]]; then
       case ${action} in
         CREATE)
-          log_info "Add ${disk_name}"
-          activate_osd "${disk_name}"
+          if is_osd_disk ${hotplug_disk}; then
+            log_info "Add ${hotplug_disk}"
+            activate_osd "${hotplug_disk}"
+          fi
           ;;
         DELETE)
-          log_info "Remove ${disk_name}"
-          if is_osd_running ${disk_name}; then
-            ${DOCKER_CMD} stop ${OSD_NAME} >/dev/null && ${DOCKER_CMD} rm ${OSD_NAME} >/dev/null
+          log_info "Remove ${hotplug_disk}"
+          if is_osd_running ${hotplug_disk}; then
+            local CONT_ID=$(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${hotplug_disk})
+            ${DOCKER_CMD} stop "${CONT_ID}" &>/dev/null || true
+            ${DOCKER_CMD} rm "${CONT_ID}" &>/dev/null || true
           fi
           ;;
         *)
@@ -541,6 +568,7 @@ function hotplug_OSD () {
     fi
   done
 }
+
 # XXX: We suppose we don't need any lvs and raid disks at all and just delete them
 function clear_lvs_disks () {
   lvs=$(lvscan | grep '/dev.*' | awk '{print $2}')
@@ -600,5 +628,4 @@ function clear_raid_disks () {
     done
   done
 }
-
 
