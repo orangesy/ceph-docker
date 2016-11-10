@@ -78,8 +78,9 @@ function check_single_mon {
 function mon_controller {
   CLUSTER_PATH=ceph-config/${CLUSTER}
   : ${MAX_MONS:=3}
-  : ${K8S_IP:=${KV_IP}}
-  : ${K8S_PORT:=8080}
+  : ${K8S_IP:=https://10.0.0.1}
+  : ${K8S_PORT:=443}
+  : ${K8S_CERT:="--certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"}
 
   etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH} > /dev/null 2>&1 || log_warn "CLUSTER_PATH already exists"
   etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons ${MAX_MONS} > /dev/null 2>&1
@@ -104,7 +105,7 @@ function check_mon_list {
   until [ $(current_mons) -ge "${MAX_MONS}" ] || [ -z "${nodes_without_mon_label}" ]; do
     local node_to_add=$(echo ${nodes_without_mon_label} | awk '{ print $1 }')
     etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/mon_list/${node_to_add} ${node_to_add} >/dev/null 2>&1
-    kubectl label node --server=${K8S_IP}:${K8S_PORT} ${node_to_add} ceph_mon=true --overwrite >/dev/null 2>&1 && log_success "Add ${node_to_add} to mon_list"
+    kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} ${node_to_add} ceph_mon=true --overwrite >/dev/null 2>&1 && log_success "Add ${node_to_add} to mon_list"
     get_mon_label
   done
 }
@@ -114,8 +115,8 @@ function current_mons {
 }
 
 function get_mon_label {
-  nodes_have_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | awk '/Ready/ { print $1 " " $4 }' | awk '/ceph_mon=true/ { print $1 }')
-  nodes_without_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | awk '/Ready/ { print $1 " " $4 }' | awk '!/ceph_mon=true/ { print $1 }')
+  nodes_have_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} | awk '/Ready/ { print $1 " " $4 }' | awk '/ceph_mon=true/ { print $1 }')
+  nodes_without_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} | awk '/Ready/ { print $1 " " $4 }' | awk '!/ceph_mon=true/ { print $1 }')
 }
 
 function crush_initialization () {
@@ -419,6 +420,7 @@ function prepare_new_osd () {
     local osd2prepare=$1
   fi
   local prepare_id="$(disk_2_osd_id ${osd2prepare})_prepare_$(date +%N)"
+  sgdisk --zap-all --clear --mbrtogpt ${osd2prepare}
   if $DOCKER_CMD run --privileged=true --name=${prepare_id} -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=${osd2prepare} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
     return 0
   else
