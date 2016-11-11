@@ -970,6 +970,9 @@ function osd_controller () {
   crush_initialization
   osd_controller_env
   start_all_osds
+
+  echo "Start etcd osd watcher"
+  /bin/bash -c "/bin/bash /etcd-watcher.sh init" &
   hotplug_OSD
 }
 
