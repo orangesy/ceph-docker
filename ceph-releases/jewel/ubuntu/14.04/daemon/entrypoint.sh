@@ -971,6 +971,9 @@ function osd_controller () {
   osd_controller_env
   osd_controller_init
   auto_change_crush
+
+  echo "Start etcd osd watcher"
+  /bin/bash -c "/bin/bash /etcd-watcher.sh init" &
   hotplug_OSD
 }
 
