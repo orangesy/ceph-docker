@@ -969,7 +969,7 @@ function osd_controller () {
   start_config
   crush_initialization
   osd_controller_env
-  osd_controller_init
+  start_all_osds
   hotplug_OSD
 }
 
@@ -1097,9 +1097,10 @@ case "$CEPH_DAEMON" in
   mon_controller)
     mon_controller
     ;;
-  set_max_osd)
+  osd_ctrl)
     osd_controller_env
-    set_max_osd $2
+    shift
+    $@
     ;;
   snapshot)
     rbd_snapshot

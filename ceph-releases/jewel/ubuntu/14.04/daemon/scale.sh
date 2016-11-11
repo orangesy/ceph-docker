@@ -306,6 +306,9 @@ function set_pg_num () {
 # setup/check require option and tool
 function osd_controller_env () {
   : ${CLUSTER_PATH:=ceph-config/${CLUSTER}}
+  if [ -z "${KV_IP}" ]; then
+    check_KV_IP
+  fi
   command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
   DOCKER_CMD=$(command -v docker)
   DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
@@ -322,10 +325,11 @@ function osd_controller_env () {
   chown ceph. ${OSD_FOLDER}
   if [ -n "${OSD_MEM}" ]; then OSD_MEM="-m ${OSD_MEM}"; fi
   if [ -n "${OSD_CPU_CORE}" ]; then OSD_CPU_CORE="-c ${OSD_CPU_CORE}"; fi
+  # if no max_osd_num_per_node key then create one
+  etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/max_osd_num_per_node 1 &>/dev/null || true
 }
 
-# Initialization, start OSDs they are ready to run.
-function osd_controller_init () {
+function start_all_osds () {
   BUILD_FIRST_OSD=true
 
   # get all avail disks
@@ -346,10 +350,6 @@ function osd_controller_init () {
   if [ "${BUILD_FIRST_OSD}" == "true" ]; then
     add_new_osd
   fi
-}
-
-function set_max_osd () {
-echo "aa"
 }
 
 function activate_osd () {
@@ -404,7 +404,7 @@ function add_new_osd () {
   clear_lvs_disks
   clear_raid_disks
 
-  COUNTER=0
+  local COUNTER=0
   osd2add=""
   for disk in ${DISKS}; do
     if [ "$(is_osd_disk ${disk})" == "false" ] && [ "${COUNTER}" -lt "${add_n}" ]; then
@@ -420,6 +420,8 @@ function add_new_osd () {
       log_err "OSD ${disk} fail to activate."
     fi
   done
+  # after add osd, resize pg_num
+  auto_change_crush
 }
 
 function prepare_new_osd () {
@@ -463,6 +465,38 @@ function create_cont_name () {
   fi
 }
 
+function set_max_osd () {
+  if [ -z "$1" ]; then
+    local MAX_OSDS=1
+  else
+    local MAX_OSDS=$1
+  fi
+  if etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}; then
+    log_success "Expect OSD number per node is ${MAX_OSDS}."
+  else
+    log_err "Fail to set max_osd_num_per_node"
+    return 1
+  fi
+}
+
+function get_max_osd {
+  local MAX_OSDS=""
+  if MAX_OSDS=$(etcdctl -C ${KV_IP}:${KV_PORT} get ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}); then
+    echo "${MAX_OSDS}"
+  else
+    log_err "Fail to get max_osd_num_per_node"
+    return 1
+  fi
+}
+
+function get_active_osd_nums () {
+  ${DOCKER_CMD} ps -fq LABEL=CEPH=osd | wc -l
+}
+
+function stop_all_osds () {
+  ${DOCKER_CMD} stop $(${DOCKER_CMD} ps -fq LABEL=CEPH=osd)
+}
+
 function is_osd_running () {
   # give a disk and check OSD container
   if [ -z "$1" ]; then
@@ -482,7 +516,7 @@ function is_osd_running () {
   if [ -z "${CONT_ID}" ]; then
     return 1
   else
-    ${DOCKER_CMD} rm "${CONT_ID}"
+    ${DOCKER_CMD} rm ${CONT_ID}
     return 1
   fi
 }
@@ -530,15 +564,11 @@ function get_avail_disks () {
       continue
     fi
 
-    if [[ -z "$(lsblk /dev/${disk} -no MOUNTPOINT)" &&
-      "$(lsblk /dev/${disk}1 -no PARTLABEL 2>/dev/null)" != "ceph data" ]]; then
+    if [ -z "$(lsblk /dev/${disk} -no MOUNTPOINT)" ]; then
       # Find it
       echo "/dev/${disk}"
     fi
   done < <(echo "$BLOCKS")
-
-  # No available disks
-  echo ""
 }
 
 function hotplug_OSD () {
@@ -558,8 +588,8 @@ function hotplug_OSD () {
           log_info "Remove ${hotplug_disk}"
           if is_osd_running ${hotplug_disk}; then
             local CONT_ID=$(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${hotplug_disk})
-            ${DOCKER_CMD} stop "${CONT_ID}" &>/dev/null || true
-            ${DOCKER_CMD} rm "${CONT_ID}" &>/dev/null || true
+            ${DOCKER_CMD} stop ${CONT_ID} &>/dev/null || true
+            ${DOCKER_CMD} rm ${CONT_ID} &>/dev/null || true
           fi
           ;;
         *)
