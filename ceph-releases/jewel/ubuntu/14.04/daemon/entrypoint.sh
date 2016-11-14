@@ -969,8 +969,10 @@ function osd_controller () {
   start_config
   crush_initialization
   osd_controller_env
-  osd_controller_init
-  auto_change_crush
+  start_all_osds
+
+  echo "Start etcd osd watcher"
+  /bin/bash -c "/bin/bash /etcd-watcher.sh init" &
   hotplug_OSD
 }
 
@@ -1098,10 +1100,10 @@ case "$CEPH_DAEMON" in
   mon_controller)
     mon_controller
     ;;
-  add_osd)
+  osd_ctrl)
     osd_controller_env
-    add_new_osd $2
-    auto_change_crush
+    shift
+    $@
     ;;
   snapshot)
     rbd_snapshot
