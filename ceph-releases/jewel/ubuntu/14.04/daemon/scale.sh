@@ -193,6 +193,12 @@ function auto_change_crush () {
   : ${CRUSH_TYPE:=1}
   : ${PGs_PER_OSD:=64}
 
+  # If there are no osds, We don't change pg_num
+  health_log=$(timeout 10 ceph health 2>/dev/null)
+  if echo ${health_log} | grep -q "no osds"; then
+    return 0
+  fi
+
   # set lock to avoid multiple node writting together
   until etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/osd_crush_lock ${HOSTNAME} > /dev/null 2>&1; do
     local LOCKER_NAME=$(kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} get ${CLUSTER_PATH}/osd_crush_lock)
