@@ -56,5 +56,9 @@ RUN chmod +x /usr/local/bin/kubectl
 ADD https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64 /usr/local/bin/jq
 RUN chmod +x /usr/local/bin/jq
 
+# Upgrade mdadm to 3.3
+ADD http://mirrors.kernel.org/ubuntu/pool/main/m/mdadm/mdadm_3.3-2ubuntu7_amd64.deb /tmp/mdadm.deb
+RUN dpkg -i /tmp/mdadm.deb
+
 ADD entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
