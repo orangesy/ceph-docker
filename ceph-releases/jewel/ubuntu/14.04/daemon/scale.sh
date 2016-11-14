@@ -78,8 +78,8 @@ function check_single_mon {
 function mon_controller {
   CLUSTER_PATH=ceph-config/${CLUSTER}
   : ${MAX_MONS:=3}
-  : ${K8S_IP:=https://10.0.0.1}
-  : ${K8S_PORT:=443}
+  : ${K8S_IP:=https://${KUBERNETES_SERVICE_HOST}}
+  : ${K8S_PORT:=${KUBERNETES_SERVICE_PORT}}
   : ${K8S_CERT:="--certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"}
 
   etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH} > /dev/null 2>&1 || log_warn "CLUSTER_PATH already exists"
