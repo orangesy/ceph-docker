@@ -345,10 +345,7 @@ function start_all_osds () {
   done
 
   add_new_osd auto
-  # If no osd is running, then build one.
-  if [ "${BUILD_FIRST_OSD}" == "true" ]; then
-    echo "force build osd"
-  fi
+  # XXX: BUILD_FIRST_OSD=true, then force to format one disk
 }
 
 function activate_osd () {
@@ -426,7 +423,8 @@ function add_new_osd () {
 }
 
 function calc_osd2add () {
-  if ! max_osd_num=$(etcdctl get ${CLUSTER_PATH}/max_osd_num_per_node); then    max_osd_num=1
+  if ! max_osd_num=$(etcdctl get ${CLUSTER_PATH}/max_osd_num_per_node); then
+    max_osd_num=1
   fi
 
   if [ $(get_active_osd_nums) -ge "${max_osd_num}" ]; then
@@ -543,7 +541,6 @@ function is_osd_correct() {
     disk2verify=$1
   fi
 
-  # XXX: OSD_ID we want to find osd id from osd mounted folder
   disk2verify="${disk2verify}1"
   if ceph-disk --setuser ceph --setgroup disk activate ${disk2verify} &>/dev/null; then
     OSD_ID=$(df | grep "${disk2verify}" | sed "s/.*${CLUSTER}-//g")
@@ -592,10 +589,7 @@ function hotplug_OSD () {
     if [[ "${hotplug_disk}" =~ /dev/sd[a-z]$ ]]; then
       case ${action} in
         CREATE)
-          if [ "$(is_osd_disk ${disk})" == "true" ]; then
-            log_info "Add ${hotplug_disk}"
-            activate_osd "${hotplug_disk}"
-          fi
+          start_all_osds
           add_new_osd auto
           ;;
         DELETE)
