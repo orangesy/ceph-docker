@@ -1,5 +1,4 @@
 #!/bin/bash
-
 source scale.sh
 
 if [ -z $1 ]; then
@@ -13,7 +12,8 @@ else
   max_osd_num=$ETCD_WATCH_VALUE
   echo "max_osd_num: $max_osd_num"
 
-  # TODO: Call add osd function
+  /entrypoint.sh osd_ctrl start_all_osds
+  /entrypoint.sh osd_ctrl add_new_osd auto
 fi
 
 

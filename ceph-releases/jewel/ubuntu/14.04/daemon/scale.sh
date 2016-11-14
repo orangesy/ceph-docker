@@ -307,9 +307,6 @@ function set_pg_num () {
 # setup/check require option and tool
 function osd_controller_env () {
   : ${CLUSTER_PATH:=ceph-config/${CLUSTER}}
-  if [ -z "${KV_IP}" ]; then
-    check_KV_IP
-  fi
   command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
   DOCKER_CMD=$(command -v docker)
   DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
@@ -327,7 +324,7 @@ function osd_controller_env () {
   if [ -n "${OSD_MEM}" ]; then OSD_MEM="-m ${OSD_MEM}"; fi
   if [ -n "${OSD_CPU_CORE}" ]; then OSD_CPU_CORE="-c ${OSD_CPU_CORE}"; fi
   # if no max_osd_num_per_node key then create one
-  etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/max_osd_num_per_node 1 &>/dev/null || true
+  etcdctl mk ${CLUSTER_PATH}/max_osd_num_per_node 1 &>/dev/null || true
 }
 
 function start_all_osds () {
@@ -347,9 +344,10 @@ function start_all_osds () {
     fi
   done
 
+  add_new_osd auto
   # If no osd is running, then build one.
   if [ "${BUILD_FIRST_OSD}" == "true" ]; then
-    add_new_osd
+    echo "force build osd"
   fi
 }
 
@@ -389,6 +387,8 @@ function add_new_osd () {
   # if $1 is null, then add one osd.
   if [ -z "$1" ]; then
     add_n=1
+  elif [ "$1" == "auto" ]; then
+    add_n=$(calc_osd2add)
   else
     add_n=$1
   fi
@@ -423,6 +423,18 @@ function add_new_osd () {
   done
   # after add osd, resize pg_num
   auto_change_crush
+}
+
+function calc_osd2add () {
+  if ! max_osd_num=$(etcdctl get ${CLUSTER_PATH}/max_osd_num_per_node); then    max_osd_num=1
+  fi
+
+  if [ $(get_active_osd_nums) -ge "${max_osd_num}" ]; then
+    echo "0"
+  else
+    local osd2add=$(expr ${max_osd_num} - $(get_active_osd_nums))
+    echo ${osd2add}
+  fi
 }
 
 function prepare_new_osd () {
@@ -472,7 +484,7 @@ function set_max_osd () {
   else
     local MAX_OSDS=$1
   fi
-  if etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}; then
+  if etcdctl set ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}; then
     log_success "Expect OSD number per node is ${MAX_OSDS}."
   else
     log_err "Fail to set max_osd_num_per_node"
@@ -482,7 +494,7 @@ function set_max_osd () {
 
 function get_max_osd {
   local MAX_OSDS=""
-  if MAX_OSDS=$(etcdctl -C ${KV_IP}:${KV_PORT} get ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}); then
+  if MAX_OSDS=$(etcdctl get ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}); then
     echo "${MAX_OSDS}"
   else
     log_err "Fail to get max_osd_num_per_node"
@@ -580,10 +592,11 @@ function hotplug_OSD () {
     if [[ "${hotplug_disk}" =~ /dev/sd[a-z]$ ]]; then
       case ${action} in
         CREATE)
-          if is_osd_disk ${hotplug_disk}; then
+          if [ "$(is_osd_disk ${disk})" == "true" ]; then
             log_info "Add ${hotplug_disk}"
             activate_osd "${hotplug_disk}"
           fi
+          add_new_osd auto
           ;;
         DELETE)
           log_info "Remove ${hotplug_disk}"
