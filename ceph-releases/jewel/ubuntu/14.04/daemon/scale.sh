@@ -125,10 +125,9 @@ function crush_initialization () {
   # DO NOT EDIT DEFAULT POOL
   DEFAULT_POOL=rbd
 
-  # Default crush leaf [ osd | host | rack] & replication size 1 ~ 9
-  DEFAULT_CRUSH_LEAF=osd
-  DEFAULT_POOL_COPIES=1
-  DEFAULT_CRUSHMAP="/crushmap.bin"
+  # Default crush leaf [ osd | host ] & replication size 1 ~ 9
+  : ${DEFAULT_CRUSH_LEAF:=osd}
+  : ${DEFAULT_POOL_COPIES:=1}
 
   # set lock to avoid multiple node writting together
   until etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/osd_init_lock ${HOSTNAME} > /dev/null 2>&1; do
@@ -149,9 +148,10 @@ function crush_initialization () {
 
     # initialization of crushmap
     log_info "Initialization of crushmap"
-    ceph ${CEPH_OPTS} osd setcrushmap -i ${DEFAULT_CRUSHMAP}
+    # create a crush rule, chooseleaf as osd.
+    ceph ${CEPH_OPTS} osd crush rule create-simple replicated_type_osd default osd firstn
 
-    # crush_ruleset 1 for host, 2 for osd, 3 for rack
+    # crush_ruleset 0 for host, 1 for osd
     case "${DEFAULT_CRUSH_LEAF}" in
       host)
         ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 0
@@ -159,11 +159,8 @@ function crush_initialization () {
       osd)
         ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 1
         ;;
-      rack)
-        ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 2
-        ;;
       *)
-        log_warn "DEFAULT_CRUSH_LEAF not in [ osd | host | rack ], do nothing"
+        log_warn "DEFAULT_CRUSH_LEAF not in [ osd | host ], do nothing"
         ;;
     esac
 
@@ -190,7 +187,7 @@ function crush_initialization () {
 function auto_change_crush () {
   # DO NOT EDIT DEFAULT POOL
   DEFAULT_POOL=rbd
-  : ${CRUSH_TYPE:=1}
+  : ${CRUSH_TYPE:=safety}
   : ${PGs_PER_OSD:=64}
 
   # If there are no osds, We don't change pg_num
@@ -219,21 +216,19 @@ function auto_change_crush () {
   kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} put ${CLUSTER_PATH}/crush_type ${CRUSH_TYPE} >/dev/null 2>&1
 
   case "${CRUSH_TYPE}" in
-    0)
-      log_success "Disable changing crush rule automatically"
+    none)
+      log_success "Disable changing crush rule automatically."
       ;;
-    1)
-      MAX_COPIES=3
-      crush_type1
-      auto_change_crush_leaf ${MAX_COPIES}
+    space)
+      crush_type_space
       ;;
-    2)
-      MAX_COPIES=2
-      crush_type2
-      auto_change_crush_leaf ${MAX_COPIES}
+    safety)
+      crush_type_safety
       ;;
     *)
-      log_warn "Definition of CRUSH_TYPE error. 0, 1 & 2 only"
+      log_warn "Definition of CRUSH_TYPE error. Do nothing."
+      log_warn "Disable changing crush rule automatically."
+      log_warn "CRUSH_TYPE: [ none | space | safety ]."
       ;;
   esac
 
@@ -241,33 +236,12 @@ function auto_change_crush () {
   kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} del ${CLUSTER_PATH}/osd_crush_lock > /dev/null 2>&1
 }
 
-# auto change pg & crush leaf. Max replications is 3.
-function crush_type1 () {
-  # RCs not greater than 3
-  if [ ${OSDs} -eq "0" ]; then
-    log_warn "No OSD, do nothing with resizing RCs"
-  elif [ ${OSDs} -lt "3" ]; then
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size ${OSDs}
-  else
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 3
-  fi
-
-  # multiple = OSDs / 3, pg_num = PGs_PER_OSD x multiple
-  local prefix_multiple=$(expr ${OSDs} '+' 1)
-  local multiple=$(expr ${prefix_multiple} '/' 3)
-  if [ ${multiple} -lt "1" ]; then
-    local multiple=1
-  fi
-  local PG_NUM=$(expr ${PGs_PER_OSD} '*' ${multiple})
-  set_pg_num ${DEFAULT_POOL} ${PG_NUM}
-}
-
 # auto change pg & crush leaf. Max replications is 2.
-function crush_type2 () {
+function crush_type_space () {
   # RCs not greater than 2
-  if [ ${OSDs} -eq "0" ]; then
-    log_warn "No OSD, do nothing with resizing RCs"
-  elif [ ${OSDs} -eq "1" ]; then
+  if [ ${NODEs} -eq "0" ]; then
+    log_warn "No Storage Node, do nothing with changing crush_type"
+  elif [ ${NODEs} -eq "1" ]; then
     ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 1
   else
     ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 2
@@ -281,11 +255,34 @@ function crush_type2 () {
   fi
   local PG_NUM=$(expr ${PGs_PER_OSD} '*' ${multiple})
   set_pg_num ${DEFAULT_POOL} ${PG_NUM}
+  auto_change_crush_leaf 2
+}
+
+# auto change pg & crush leaf. Max replications is 3.
+function crush_type_safety () {
+  # RCs not greater than 3
+  if [ ${NODEs} -eq "0" ]; then
+    log_warn "No Storage Node, do nothing with changing crush_type"
+  elif [ ${NODEs} -lt "3" ]; then
+    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size ${NODEs}
+  else
+    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 3
+  fi
+
+  # multiple = OSDs / 3, pg_num = PGs_PER_OSD x multiple
+  local prefix_multiple=$(expr ${OSDs} '+' 1)
+  local multiple=$(expr ${prefix_multiple} '/' 3)
+  if [ ${multiple} -lt "1" ]; then
+    local multiple=1
+  fi
+  local PG_NUM=$(expr ${PGs_PER_OSD} '*' ${multiple})
+  set_pg_num ${DEFAULT_POOL} ${PG_NUM}
+  auto_change_crush_leaf 2
 }
 
 # usage: auto_change_crush_leaf ${MAX_COPIES}
 function auto_change_crush_leaf () {
-  # crush_ruleset 0 for host, 1 for osd, 2 for rack
+  # crush_ruleset 0 for host, 1 for osd
   if [ ${NODEs} -ge $1 ]; then
     ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 0
   else
@@ -350,7 +347,6 @@ function start_all_osds () {
   done
 
   add_new_osd auto
-  # TODO: If no OSD, then force to format one disk
 }
 
 function activate_osd () {
@@ -469,12 +465,15 @@ function osd_init_minimal () {
     fi
   done
 
+  # TODO: Deploy PODs on two or more storage node concurrently, every node will choose one and force to format it.
+  # we hope only one disk in the cluster will be format.
   if [ -z "${osd_add_list}" ] && timeout 10 ceph health 2>/dev/null | grep -q "no osds"; then
     osd_add_list=$(echo $1 | awk '{print $1}')
   fi
 }
 
 function osd_init_force () {
+  # TODO: force all disks exclude OSDs in the current cluster.
   echo "osd_init_force"
 }
 
