@@ -404,32 +404,54 @@ function add_new_osd () {
   fi
 
   # find available disks.
-  DISKS=$(get_avail_disks)
-
+  DISKS=""
+  for disk in $(get_avail_disks); do
+    if ! is_osd_running ${disk}; then
+      DISKS="${DISKS} ${disk}"
+    fi
+  done
   if [ -z "${DISKS}" ]; then
     log_warn "No available disk for adding a new OSD."
     return 0
   fi
 
-  # clear lvm & raid
-  clear_lvs_disks
-  clear_raid_disks
+  # find disks not having OSD partitions.
+  disks_without_osd=""
+  for disk in ${DISKS}; do
+    if [ "$(is_osd_disk ${disk})" == "false" ]; then
+      disks_without_osd="${disks_without_osd} ${disk}"
+    fi
+  done
 
   osd_add_list=""
   # Three cases for selecting osd disks and print to $osd_add_list.
   case "${OSD_INIT_MODE}" in
     minimal)
-      osd_init_minimal "${DISKS}" ${add_n}
+      # Ignore OSD disks. But if No OSDs in cluster, force to choose one.
+      select_n_disks "${disks_without_osd}" ${add_n}
+
+      # TODO: Deploy storage PODs on two or more storage node concurrently,
+      # every node will force to choose one and use it.
+      # We hope only one disk in the cluster will be format.
+      if [ -z "${osd_add_list}" ] && timeout 10 ceph health 2>/dev/null | grep -q "no osds"; then
+        osd_add_list=$(echo $1 | awk '{print $1}')
+      fi
       ;;
     force)
-      osd_init_force "${DISKS}" ${add_n}
+      # Force to select all disks
+      select_n_disks "${DISKS}" ${add_n}
       ;;
     strict)
-      osd_init_strict "${DISKS}" ${add_n}
+      # Ignore all OSD disks.
+      select_n_disks "${disks_without_osd}" ${add_n}
       ;;
     *)
       ;;
   esac
+
+  # clear lvm & raid
+  clear_lvs_disks
+  clear_raid_disks
 
   for disk in ${osd_add_list}; do
     if ! prepare_new_osd ${disk}; then
@@ -439,7 +461,9 @@ function add_new_osd () {
     fi
   done
   # after add osd, resize pg_num
-  auto_change_crush
+  if [ -n "${osd_add_list}" ]; then
+    auto_change_crush
+  fi
 }
 
 function calc_osd2add () {
@@ -455,32 +479,10 @@ function calc_osd2add () {
   fi
 }
 
-# If no OSDs in ceph cluster, and no avail disks, then force to format one.
-function osd_init_minimal () {
+function select_n_disks () {
   local COUNTER=0
   for disk in $1; do
-    if [ "$(is_osd_disk ${disk})" == "false" ] && [ "${COUNTER}" -lt "$2" ]; then
-      osd_add_list="${osd_add_list} ${disk}"
-      let COUNTER=COUNTER+1
-    fi
-  done
-
-  # TODO: Deploy PODs on two or more storage node concurrently, every node will choose one and force to format it.
-  # we hope only one disk in the cluster will be format.
-  if [ -z "${osd_add_list}" ] && timeout 10 ceph health 2>/dev/null | grep -q "no osds"; then
-    osd_add_list=$(echo $1 | awk '{print $1}')
-  fi
-}
-
-function osd_init_force () {
-  # TODO: force all disks exclude OSDs in the current cluster.
-  echo "osd_init_force"
-}
-
-function osd_init_strict () {
-  local COUNTER=0
-  for disk in $1; do
-    if [ "$(is_osd_disk ${disk})" == "false" ] && [ "${COUNTER}" -lt "$2" ]; then
+    if [ "${COUNTER}" -lt "$2" ]; then
       osd_add_list="${osd_add_list} ${disk}"
       let COUNTER=COUNTER+1
     fi
@@ -564,7 +566,7 @@ function is_osd_running () {
   # give a disk and check OSD container
   if [ -z "$1" ]; then
     log_err "is_osd_running () need to assign a OSD."
-    return 1
+    exit 1
   else
     local DEV_NAME=$1
   fi
@@ -581,7 +583,7 @@ function is_osd_running () {
 function is_osd_correct() {
   if [ -z "$1" ]; then
     log_err "is_osd_correct () need to assign a OSD."
-    return 1
+    exit 1
   else
     # FIXME: disk2verify is a variable ti find ceph data JOURNAL partition.
     disk2verify=$1
