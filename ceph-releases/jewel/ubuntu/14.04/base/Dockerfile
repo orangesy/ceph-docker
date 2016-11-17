@@ -22,7 +22,10 @@ ADD https://github.com/kelseyhightower/confd/releases/download/v${CONFD_VERSION}
 ADD https://bin.equinox.io/c/ekMN3bCZFUn/forego-stable-linux-amd64.tgz /forego.tgz
 
 # install prerequisites
-RUN DEBIAN_FRONTEND=noninteractive apt-get update &&  apt-get install -y wget unzip uuid-runtime python-setuptools udev sharutils curl rsync pciutils grep grepcidr inotify-tools hdparm && \
+RUN DEBIAN_FRONTEND=noninteractive apt-get update &&  apt-get install -y wget unzip uuid-runtime python-setuptools udev sharutils curl rsync pciutils grep grepcidr inotify-tools hdparm 
+
+# Install lvm and mdadm for raid
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends mdadm lvm2 && \
 \
 # install ceph and ganesha
     apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3FE869A9 && \
@@ -52,6 +55,10 @@ RUN chmod +x /usr/local/bin/kubectl
 
 ADD https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64 /usr/local/bin/jq
 RUN chmod +x /usr/local/bin/jq
+
+# Upgrade mdadm to 3.3
+ADD http://mirrors.kernel.org/ubuntu/pool/main/m/mdadm/mdadm_3.3-2ubuntu7_amd64.deb /tmp/mdadm.deb
+RUN dpkg -i /tmp/mdadm.deb
 
 ADD entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

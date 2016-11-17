@@ -78,8 +78,9 @@ function check_single_mon {
 function mon_controller {
   CLUSTER_PATH=ceph-config/${CLUSTER}
   : ${MAX_MONS:=3}
-  : ${K8S_IP:=${KV_IP}}
-  : ${K8S_PORT:=8080}
+  : ${K8S_IP:=https://${KUBERNETES_SERVICE_HOST}}
+  : ${K8S_PORT:=${KUBERNETES_SERVICE_PORT}}
+  : ${K8S_CERT:="--certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"}
 
   etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH} > /dev/null 2>&1 || log_warn "CLUSTER_PATH already exists"
   etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons ${MAX_MONS} > /dev/null 2>&1
@@ -104,7 +105,7 @@ function check_mon_list {
   until [ $(current_mons) -ge "${MAX_MONS}" ] || [ -z "${nodes_without_mon_label}" ]; do
     local node_to_add=$(echo ${nodes_without_mon_label} | awk '{ print $1 }')
     etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/mon_list/${node_to_add} ${node_to_add} >/dev/null 2>&1
-    kubectl label node --server=${K8S_IP}:${K8S_PORT} ${node_to_add} ceph_mon=true --overwrite >/dev/null 2>&1 && log_success "Add ${node_to_add} to mon_list"
+    kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} ${node_to_add} ceph_mon=true --overwrite >/dev/null 2>&1 && log_success "Add ${node_to_add} to mon_list"
     get_mon_label
   done
 }
@@ -114,8 +115,8 @@ function current_mons {
 }
 
 function get_mon_label {
-  nodes_have_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | awk '/Ready/ { print $1 " " $4 }' | awk '/ceph_mon=true/ { print $1 }')
-  nodes_without_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | awk '/Ready/ { print $1 " " $4 }' | awk '!/ceph_mon=true/ { print $1 }')
+  nodes_have_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} | awk '/Ready/ { print $1 " " $4 }' | awk '/ceph_mon=true/ { print $1 }')
+  nodes_without_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} | awk '/Ready/ { print $1 " " $4 }' | awk '!/ceph_mon=true/ { print $1 }')
 }
 
 function crush_initialization () {
@@ -124,10 +125,9 @@ function crush_initialization () {
   # DO NOT EDIT DEFAULT POOL
   DEFAULT_POOL=rbd
 
-  # Default crush leaf [ osd | host | rack] & replication size 1 ~ 9
-  DEFAULT_CRUSH_LEAF=osd
-  DEFAULT_POOL_COPIES=1
-  DEFAULT_CRUSHMAP="/crushmap.bin"
+  # Default crush leaf [ osd | host ] & replication size 1 ~ 9
+  : ${DEFAULT_CRUSH_LEAF:=osd}
+  : ${DEFAULT_POOL_COPIES:=1}
 
   # set lock to avoid multiple node writting together
   until etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/osd_init_lock ${HOSTNAME} > /dev/null 2>&1; do
@@ -148,21 +148,19 @@ function crush_initialization () {
 
     # initialization of crushmap
     log_info "Initialization of crushmap"
-    ceph ${CEPH_OPTS} osd setcrushmap -i ${DEFAULT_CRUSHMAP}
+    # create a crush rule, chooseleaf as osd.
+    ceph ${CEPH_OPTS} osd crush rule create-simple replicated_type_osd default osd firstn
 
-    # crush_ruleset 1 for host, 2 for osd, 3 for rack
-    case ${DEFAULT_CRUSH_LEAF} in
+    # crush_ruleset 0 for host, 1 for osd
+    case "${DEFAULT_CRUSH_LEAF}" in
       host)
         ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 0
         ;;
       osd)
         ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 1
         ;;
-      rack)
-        ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 2
-        ;;
       *)
-        log_warn "DEFAULT_CRUSH_LEAF not in [ osd | host | rack ], do nothing"
+        log_warn "DEFAULT_CRUSH_LEAF not in [ osd | host ], do nothing"
         ;;
     esac
 
@@ -189,8 +187,14 @@ function crush_initialization () {
 function auto_change_crush () {
   # DO NOT EDIT DEFAULT POOL
   DEFAULT_POOL=rbd
-  : ${CRUSH_TYPE:=1}
+  : ${CRUSH_TYPE:=safety}
   : ${PGs_PER_OSD:=64}
+
+  # If there are no osds, We don't change pg_num
+  health_log=$(timeout 10 ceph health 2>/dev/null)
+  if echo ${health_log} | grep -q "no osds"; then
+    return 0
+  fi
 
   # set lock to avoid multiple node writting together
   until etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/osd_crush_lock ${HOSTNAME} > /dev/null 2>&1; do
@@ -211,22 +215,20 @@ function auto_change_crush () {
   # Put crush type into ETCD
   kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} put ${CLUSTER_PATH}/crush_type ${CRUSH_TYPE} >/dev/null 2>&1
 
-  case ${CRUSH_TYPE} in
-    0)
-      log_success "Disable changing crush rule automatically"
+  case "${CRUSH_TYPE}" in
+    none)
+      log_success "Disable changing crush rule automatically."
       ;;
-    1)
-      MAX_COPIES=3
-      crush_type1
-      auto_change_crush_leaf ${MAX_COPIES}
+    space)
+      crush_type_space
       ;;
-    2)
-      MAX_COPIES=2
-      crush_type2
-      auto_change_crush_leaf ${MAX_COPIES}
+    safety)
+      crush_type_safety
       ;;
     *)
-      log_warn "Definition of CRUSH_TYPE error. 0, 1 & 2 only"
+      log_warn "Definition of CRUSH_TYPE error. Do nothing."
+      log_warn "Disable changing crush rule automatically."
+      log_warn "CRUSH_TYPE: [ none | space | safety ]."
       ;;
   esac
 
@@ -234,33 +236,12 @@ function auto_change_crush () {
   kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} del ${CLUSTER_PATH}/osd_crush_lock > /dev/null 2>&1
 }
 
-# auto change pg & crush leaf. Max replications is 3.
-function crush_type1 () {
-  # RCs not greater than 3
-  if [ ${OSDs} -eq "0" ]; then
-    log_warn "No OSD, do nothing with resizing RCs"
-  elif [ ${OSDs} -lt "3" ]; then
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size ${OSDs}
-  else
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 3
-  fi
-
-  # multiple = OSDs / 3, pg_num = PGs_PER_OSD x multiple
-  local prefix_multiple=$(expr ${OSDs} '+' 1)
-  local multiple=$(expr ${prefix_multiple} '/' 3)
-  if [ ${multiple} -lt "1" ]; then
-    local multiple=1
-  fi
-  local PG_NUM=$(expr ${PGs_PER_OSD} '*' ${multiple})
-  set_pg_num ${DEFAULT_POOL} ${PG_NUM}
-}
-
 # auto change pg & crush leaf. Max replications is 2.
-function crush_type2 () {
+function crush_type_space () {
   # RCs not greater than 2
-  if [ ${OSDs} -eq "0" ]; then
-    log_warn "No OSD, do nothing with resizing RCs"
-  elif [ ${OSDs} -eq "1" ]; then
+  if [ ${NODEs} -eq "0" ]; then
+    log_warn "No Storage Node, do nothing with changing crush_type"
+  elif [ ${NODEs} -eq "1" ]; then
     ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 1
   else
     ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 2
@@ -274,11 +255,34 @@ function crush_type2 () {
   fi
   local PG_NUM=$(expr ${PGs_PER_OSD} '*' ${multiple})
   set_pg_num ${DEFAULT_POOL} ${PG_NUM}
+  auto_change_crush_leaf 2
+}
+
+# auto change pg & crush leaf. Max replications is 3.
+function crush_type_safety () {
+  # RCs not greater than 3
+  if [ ${NODEs} -eq "0" ]; then
+    log_warn "No Storage Node, do nothing with changing crush_type"
+  elif [ ${NODEs} -lt "3" ]; then
+    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size ${NODEs}
+  else
+    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 3
+  fi
+
+  # multiple = OSDs / 3, pg_num = PGs_PER_OSD x multiple
+  local prefix_multiple=$(expr ${OSDs} '+' 1)
+  local multiple=$(expr ${prefix_multiple} '/' 3)
+  if [ ${multiple} -lt "1" ]; then
+    local multiple=1
+  fi
+  local PG_NUM=$(expr ${PGs_PER_OSD} '*' ${multiple})
+  set_pg_num ${DEFAULT_POOL} ${PG_NUM}
+  auto_change_crush_leaf 2
 }
 
 # usage: auto_change_crush_leaf ${MAX_COPIES}
 function auto_change_crush_leaf () {
-  # crush_ruleset 0 for host, 1 for osd, 2 for rack
+  # crush_ruleset 0 for host, 1 for osd
   if [ ${NODEs} -ge $1 ]; then
     ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 0
   else
@@ -306,6 +310,7 @@ function set_pg_num () {
 # setup/check require option and tool
 function osd_controller_env () {
   : ${CLUSTER_PATH:=ceph-config/${CLUSTER}}
+  : ${OSD_INIT_MODE:=minimal}
   command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
   DOCKER_CMD=$(command -v docker)
   DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
@@ -322,14 +327,13 @@ function osd_controller_env () {
   chown ceph. ${OSD_FOLDER}
   if [ -n "${OSD_MEM}" ]; then OSD_MEM="-m ${OSD_MEM}"; fi
   if [ -n "${OSD_CPU_CORE}" ]; then OSD_CPU_CORE="-c ${OSD_CPU_CORE}"; fi
+  # if no max_osd_num_per_node key then create one
+  etcdctl mk ${CLUSTER_PATH}/max_osd_num_per_node 1 &>/dev/null || true
 }
 
-# Start OSDs they are ready to run. (existing osds)
-function osd_controller_init () {
-  BUILD_FIRST_OSD=true
-
+function start_all_osds () {
   # get all avail disks
-  DISKS=$(get_avail_disk)
+  local DISKS=$(get_avail_disks)
 
   if [ -z "${DISKS}" ]; then
     log_err "No available disk"
@@ -342,10 +346,7 @@ function osd_controller_init () {
     fi
   done
 
-  # If no osd is running, then build one.
-  if [ "${BUILD_FIRST_OSD}" == "true" ]; then
-    add_new_osd
-  fi
+  add_new_osd auto
 }
 
 function activate_osd () {
@@ -358,22 +359,30 @@ function activate_osd () {
 
   # if OSD is running or come from another cluster, then return 0.
   if is_osd_running ${disk2act}; then
-    BUILD_FIRST_OSD=false
-    log_success "${disk2act} is running as OSD."
+    local CONT_ID=$(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${disk2act})
+    log_success "${disk2act} is running as OSD (${CONT_ID})."
     return 0
   elif ! is_osd_correct ${disk2act}; then
-    log_warn "The OSD disk ${disk2act} isn't correct for current Ceph cluster."
+    log_warn "The OSD disk ${disk2act} unable to activate for current Ceph cluster."
     return 0
   fi
 
-  OSD_NAME=$(disk_2_osd_id ${disk2act})
-  # XXX: auto find DAEMON_VERSION
-  osd_container=$($DOCKER_CMD run -d --name=${OSD_NAME} --privileged=true --net=host --pid=host -v /dev:/dev  ${OSD_MEM} ${OSD_CPU_CORE} -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=${disk2act} -e OSD_TYPE=activate ${DAEMON_VERSION} osd | cut -c 1-12)
+  local CONT_NAME=$(create_cont_name ${disk2act} ${OSD_ID})
+  if $DOCKER_CMD inspect ${CONT_NAME} &>/dev/null; then
+    $DOCKER_CMD rm ${CONT_NAME} >/dev/null
+  fi
 
-  # XXX: check OSD container status for few seconds
+  # XXX: auto find DAEMON_VERSION
+  $DOCKER_CMD run -d -l CLUSTER=${CLUSTER} -l CEPH=osd -l DEV_NAME=${disk2act} -l OSD_ID=${OSD_ID} \
+    --name=${CONT_NAME} --privileged=true --net=host --pid=host -v /dev:/dev ${OSD_MEM} ${OSD_CPU_CORE} \
+    -e KV_TYPE=${KV_TYPE} -e KV_PORT=${KV_PORT} -e DEBUG_MODE=${DEBUG_MODE} -e OSD_DEVICE=${disk2act} \
+    -e OSD_TYPE=activate ${DAEMON_VERSION} osd >/dev/null
+
+  # XXX: check OSD container status continuously
+  sleep 3
   if is_osd_running ${disk2act}; then
-    BUILD_FIRST_OSD=false
-    log_success "Success to activate ${disk2act}"
+    local CONT_ID=$(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${disk2act})
+    log_success "Success to activate ${disk2act} (${CONT_ID})."
   fi
 }
 
@@ -381,32 +390,103 @@ function add_new_osd () {
   # if $1 is null, then add one osd.
   if [ -z "$1" ]; then
     add_n=1
+  elif [ "$1" == "auto" ]; then
+    add_n=$(calc_osd2add)
   else
     add_n=$1
   fi
 
-  # find a usable disk and format it.
-  DISKS=$(get_avail_disk)
+  # check add_n is natural number.
+  re="^[0-9]+([.][0-9]+)?$"
+  if ! [[ ${add_n} =~ $re ]]; then
+    log_err "\${add_n} is not a natural number."
+    return 1
+  fi
 
+  # find available disks.
+  DISKS=""
+  for disk in $(get_avail_disks); do
+    if ! is_osd_running ${disk}; then
+      DISKS="${DISKS} ${disk}"
+    fi
+  done
   if [ -z "${DISKS}" ]; then
     log_warn "No available disk for adding a new OSD."
     return 0
   fi
 
-  COUNTER=0
-  osd2add=""
+  # find disks not having OSD partitions.
+  disks_without_osd=""
   for disk in ${DISKS}; do
-    if [ "$(is_osd_disk ${disk})" == "false" ] && [ "${COUNTER}" -lt "${add_n}" ]; then
-      osd2add="${osd2add} ${disk}"
-      let COUNTER=COUNTER+1
+    if [ "$(is_osd_disk ${disk})" == "false" ]; then
+      disks_without_osd="${disks_without_osd} ${disk}"
     fi
   done
 
-  for disk in ${osd2add}; do
+  osd_add_list=""
+  # Three cases for selecting osd disks and print to $osd_add_list.
+  case "${OSD_INIT_MODE}" in
+    minimal)
+      # Ignore OSD disks. But if No OSDs in cluster, force to choose one.
+      if [ -n "${disks_without_osd}" ]; then
+        select_n_disks "${disks_without_osd}" ${add_n}
+      elif [ -z "${disks_without_osd}" ] && timeout 10 ceph health 2>/dev/null | grep -q "no osds"; then
+        # TODO: Deploy storage PODs on two or more storage node concurrently,
+        # every node will force to choose one and use it.
+        # We hope only one disk in the cluster will be format.
+        osd_add_list=$(echo ${DISKS} | awk '{print $1}')
+      fi
+      ;;
+    force)
+      # Force to select all disks
+      select_n_disks "${DISKS}" ${add_n}
+      ;;
+    strict)
+      # Ignore all OSD disks.
+      select_n_disks "${disks_without_osd}" ${add_n}
+      ;;
+    *)
+      ;;
+  esac
+
+  if [ -n "${osd_add_list}" ]; then
+    # clear lvm & raid
+    clear_lvs_disks
+    clear_raid_disks
+  else
+    return 0
+  fi
+
+  for disk in ${osd_add_list}; do
     if ! prepare_new_osd ${disk}; then
       log_err "OSD ${disk} fail to prepare."
     elif ! activate_osd ${disk}; then
       log_err "OSD ${disk} fail to activate."
+    fi
+  done
+  # after add osd, resize pg_num
+  auto_change_crush
+}
+
+function calc_osd2add () {
+  if ! max_osd_num=$(etcdctl get ${CLUSTER_PATH}/max_osd_num_per_node); then
+    max_osd_num=1
+  fi
+
+  if [ $(get_active_osd_nums) -ge "${max_osd_num}" ]; then
+    echo "0"
+  else
+    local osd_num2add=$(expr ${max_osd_num} - $(get_active_osd_nums))
+    echo ${osd_num2add}
+  fi
+}
+
+function select_n_disks () {
+  local COUNTER=0
+  for disk in $1; do
+    if [ "${COUNTER}" -lt "$2" ]; then
+      osd_add_list="${osd_add_list} ${disk}"
+      let COUNTER=COUNTER+1
     fi
   done
 }
@@ -416,45 +496,86 @@ function prepare_new_osd () {
     log_err "prepare_new_osd need to assign a disk."
     return 1
   else
-    local osd2prepare=$1
+    local osd2prep=$1
   fi
-  local prepare_id="$(disk_2_osd_id ${osd2prepare})_prepare_$(date +%N)"
-  if $DOCKER_CMD run --privileged=true --name=${prepare_id} -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare -e OSD_DEVICE=${osd2prepare} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
+  local CONT_NAME="$(create_cont_name ${osd2prep})_prepare_$(date +%N)"
+  sgdisk --zap-all --clear --mbrtogpt ${osd2prep}
+  if $DOCKER_CMD run -l CLUSTER=${CLUSTER} -l CEPH=osd_prepare -l DEV_NAME=osd2prep --name=${CONT_NAME} \
+    --privileged=true -v /dev/:/dev/ -e KV_PORT=2379 -e KV_TYPE=etcd -e OSD_TYPE=prepare \
+    -e OSD_DEVICE=${osd2prep} -e OSD_FORCE_ZAP=1 ${DAEMON_VERSION} osd &>/dev/null; then
     return 0
   else
     return 1
   fi
 }
 
-function disk_2_osd_id () {
-  # if $1 is /dev/sdx then search OSD container ID
-  if [ -z "$1" ]; then
+function create_cont_name () {
+  # usage: create_cont_name DEV_PATH OSD_ID, e.g. create_cont_name /dev/sda 12 => OSD_12_sda
+  if [ $# -ne 2 ] && [ $# -ne 1 ]; then
+    log_err "create_cont_name DEV_PATH OSD_ID"
     return 1
-  elif echo "$1" | grep -q "^/dev/"; then
+  fi
+  if echo "$1" | grep -q "^/dev/"; then
     local SHORT_DEV_NAME=$(echo "$1" | sed 's/\/dev\///g')
-    # echo OSD_NAME
+  else
+    local SHORT_DEV_NAME=""
+  fi
+
+  if [ -z "${SHORT_DEV_NAME}" ] && [ -z "$2" ]; then
+    echo "OSD"
+  elif [ -z "${SHORT_DEV_NAME}" ]; then
+    echo "OSD_$2"
+  elif [ -z "$2" ]; then
     echo "OSD_${SHORT_DEV_NAME}"
   else
-    echo ""
+    echo "OSD_$2_${SHORT_DEV_NAME}"
   fi
 }
 
+function set_max_osd () {
+  if [ -z "$1" ]; then
+    local MAX_OSDS=1
+  else
+    local MAX_OSDS=$1
+  fi
+  if etcdctl set ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}; then
+    log_success "Expect OSD number per node is ${MAX_OSDS}."
+  else
+    log_err "Fail to set max_osd_num_per_node"
+    return 1
+  fi
+}
+
+function get_max_osd {
+  local MAX_OSDS=""
+  if MAX_OSDS=$(etcdctl get ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}); then
+    echo "${MAX_OSDS}"
+  else
+    log_err "Fail to get max_osd_num_per_node"
+    return 1
+  fi
+}
+
+function get_active_osd_nums () {
+  ${DOCKER_CMD} ps -fq LABEL=CEPH=osd | wc -l
+}
+
+function stop_all_osds () {
+  ${DOCKER_CMD} stop $(${DOCKER_CMD} ps -fq LABEL=CEPH=osd)
+}
+
 function is_osd_running () {
-  # convert disk name to OSD container ID.
+  # give a disk and check OSD container
   if [ -z "$1" ]; then
     log_err "is_osd_running () need to assign a OSD."
-    return 1
+    exit 1
   else
-    OSD_NAME=$(disk_2_osd_id $1)
+    local DEV_NAME=$1
   fi
 
-  local state_running=$(${DOCKER_CMD} inspect -f '{{.State.Running}}' ${OSD_NAME} 2>/dev/null)
-  if [ -z "${state_running}" ]; then
-    return 1
-  elif [ "${state_running}" == "false" ]; then
-    ${DOCKER_CMD} rm ${OSD_NAME} >/dev/null
-    return 1
-  elif [ "${state_running}" == "true" ]; then
+  # check running & exited containers
+  local CONT_ID=$(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${DEV_NAME})
+  if [ -n "${CONT_ID}" ]; then
     return 0
   else
     return 1
@@ -464,70 +585,69 @@ function is_osd_running () {
 function is_osd_correct() {
   if [ -z "$1" ]; then
     log_err "is_osd_correct () need to assign a OSD."
-    return 1
+    exit 1
   else
+    # FIXME: disk2verify is a variable ti find ceph data JOURNAL partition.
     disk2verify=$1
   fi
 
-  # FIXME: Find OSD data partition & JOURNAL partition
   disk2verify="${disk2verify}1"
   if ceph-disk --setuser ceph --setgroup disk activate ${disk2verify} &>/dev/null; then
-    OSD_ID=$(df | grep "${disk2verify}" | sed "s/.${CLUSTER}//g")
+    OSD_ID=$(df | grep "${disk2verify}" | sed "s/.*${CLUSTER}-//g")
     umount ${disk2verify}
     return 0
   else
+    OSD_ID=""
+    umount ${disk2verify} &>dev/null || true
     return 1
   fi
 }
 
 function is_osd_disk() {
   # Check label partition table includes "ceph journal" or not
-  if parted -s $1 print 2>/dev/null | egrep -sq '^ 1.*ceph data' ; then
+  if ! sgdisk --verify $1 &>/dev/null; then
+    echo "false"
+  elif parted -s $1 print 2>/dev/null | egrep -sq '^ 1.*ceph data' ; then
     echo "true"
   else
     echo "false"
   fi
 }
 
-# Find a disk not only unmounted but also non-ceph disks
-function get_avail_disk() {
+# Find disks not only unmounted but also non-ceph disks
+function get_avail_disks () {
   BLOCKS=$(readlink /sys/class/block/* -e | sed -n "s/\(.*ata[0-9]\{,2\}\).*\/\(sd[a-z]\)$/\2/p")
   [[ -n "${BLOCKS}" ]] || ( echo "" ; return 1 )
 
   while read disk ; do
     # Double check it
     if ! lsblk /dev/${disk} > /dev/null 2>&1; then
-      echo "Disk ${disk} is not a valid block device"
       continue
     fi
 
-    if [[ -z "$(lsblk /dev/${disk} -no MOUNTPOINT)" &&
-      "$(lsblk /dev/${disk}1 -no PARTLABEL 2>/dev/null)" != "ceph data" ]]; then
+    if [ -z "$(lsblk /dev/${disk} -no MOUNTPOINT)" ]; then
       # Find it
       echo "/dev/${disk}"
     fi
   done < <(echo "$BLOCKS")
-
-  # No available disk
-  echo ""
 }
 
 function hotplug_OSD () {
   inotifywait -r -m /dev/ -e CREATE -e DELETE | while read dev_msg; do
-    local disk_name=$(echo $dev_msg | awk '{print $1$3}')
+    local hotplug_disk=$(echo $dev_msg | awk '{print $1$3}')
     local action=$(echo $dev_msg | awk '{print $2}')
 
-    if [[ "${disk_name}" =~ /dev/sd[a-z]$ ]] && is_osd_disk ${disk_name}; then
-      OSD_NAME=$(disk_2_osd_id ${disk_name})
-      case ${action} in
+    if [[ "${hotplug_disk}" =~ /dev/sd[a-z]$ ]]; then
+      case "${action}" in
         CREATE)
-          log_info "Add ${disk_name}"
-          activate_osd "${disk_name}"
+          start_all_osds
+          add_new_osd auto
           ;;
         DELETE)
-          log_info "Remove ${disk_name}"
-          if is_osd_running ${disk_name}; then
-            ${DOCKER_CMD} stop ${OSD_NAME} >/dev/null && ${DOCKER_CMD} rm ${OSD_NAME} >/dev/null
+          log_info "Remove ${hotplug_disk}"
+          if is_osd_running ${hotplug_disk}; then
+            local CONT_ID=$(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${hotplug_disk})
+            ${DOCKER_CMD} stop ${CONT_ID} &>/dev/null || true
           fi
           ;;
         *)
@@ -536,3 +656,64 @@ function hotplug_OSD () {
     fi
   done
 }
+
+# XXX: We suppose we don't need any lvs and raid disks at all and just delete them
+function clear_lvs_disks () {
+  lvs=$(lvscan | grep '/dev.*' | awk '{print $2}')
+
+  if [ -n "$lvs" ]; then
+    log_info "Find logic volumes, inactive them."
+    for lv in $lvs
+    do
+      lvremove -f "${lv//\'/}"
+    done
+
+  fi
+
+  vgs=$(vgdisplay -C --noheadings --separator '|' | cut -d '|' -f 1)
+  if [ -n "$vgs" ]; then
+    log_info "Find VGs, delete them."
+    for vg in $vgs
+    do
+      vgremove -f "$vg"
+    done
+
+  fi
+
+
+  pvs=$(pvscan -s | grep '/dev/sd[a-z].*' || true)
+  if [ -n "$pvs" ]; then
+    log_info "Find PVs, delete them."
+    for pv in $pvs
+    do
+      pvremove -ff -y "$pv"
+    done
+
+  fi
+}
+
+function clear_raid_disks () {
+  mds=$(mdadm --detail --scan  | awk '{print $2}')
+
+  if [ -z "${mds}" ]; then
+    # Nothing to do
+    return 0
+  fi
+
+  for md in ${mds}
+  do
+    devs=$(mdadm --detail --export "${md}" | grep MD_DEVICE_.*_DEV | cut -d '=' -f 2)
+    if [ -z "$devs" ]; then
+      log_info "No invalid devices"
+      return 1
+    fi
+    mdadm --stop ${md}
+
+    for dev in ${devs}
+    do
+      log_info "Clear MD device: $dev"
+      mdadm --wait --zero-superblock --force "$dev"
+    done
+  done
+}
+
