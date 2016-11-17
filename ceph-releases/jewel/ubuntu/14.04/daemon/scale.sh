@@ -428,13 +428,13 @@ function add_new_osd () {
   case "${OSD_INIT_MODE}" in
     minimal)
       # Ignore OSD disks. But if No OSDs in cluster, force to choose one.
-      select_n_disks "${disks_without_osd}" ${add_n}
-
-      # TODO: Deploy storage PODs on two or more storage node concurrently,
-      # every node will force to choose one and use it.
-      # We hope only one disk in the cluster will be format.
-      if [ -z "${osd_add_list}" ] && timeout 10 ceph health 2>/dev/null | grep -q "no osds"; then
-        osd_add_list=$(echo $1 | awk '{print $1}')
+      if [ -n "${disks_without_osd}" ]; then
+        select_n_disks "${disks_without_osd}" ${add_n}
+      elif [ -z "${disks_without_osd}" ] && timeout 10 ceph health 2>/dev/null | grep -q "no osds"; then
+        # TODO: Deploy storage PODs on two or more storage node concurrently,
+        # every node will force to choose one and use it.
+        # We hope only one disk in the cluster will be format.
+        osd_add_list=$(echo ${DISKS} | awk '{print $1}')
       fi
       ;;
     force)
@@ -449,9 +449,13 @@ function add_new_osd () {
       ;;
   esac
 
-  # clear lvm & raid
-  clear_lvs_disks
-  clear_raid_disks
+  if [ -n "${osd_add_list}" ]; then
+    # clear lvm & raid
+    clear_lvs_disks
+    clear_raid_disks
+  else
+    return 0
+  fi
 
   for disk in ${osd_add_list}; do
     if ! prepare_new_osd ${disk}; then
@@ -461,9 +465,7 @@ function add_new_osd () {
     fi
   done
   # after add osd, resize pg_num
-  if [ -n "${osd_add_list}" ]; then
-    auto_change_crush
-  fi
+  auto_change_crush
 }
 
 function calc_osd2add () {
