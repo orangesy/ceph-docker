@@ -331,6 +331,12 @@ function osd_controller_env () {
   etcdctl mk ${CLUSTER_PATH}/max_osd_num_per_node 1 &>/dev/null || true
 }
 
+function run_osds () {
+  start_all_osds
+  add_new_osd auto
+  auto_change_crush
+}
+
 function start_all_osds () {
   # get all avail disks
   local DISKS=$(get_avail_disks)
@@ -345,8 +351,6 @@ function start_all_osds () {
       activate_osd $disk
     fi
   done
-
-  add_new_osd auto
 }
 
 function activate_osd () {
@@ -464,8 +468,6 @@ function add_new_osd () {
       log_err "OSD ${disk} fail to activate."
     fi
   done
-  # after add osd, resize pg_num
-  auto_change_crush
 }
 
 function calc_osd2add () {
@@ -644,8 +646,7 @@ function hotplug_OSD () {
     if [[ "${hotplug_disk}" =~ /dev/sd[a-z]$ ]]; then
       case "${action}" in
         CREATE)
-          start_all_osds
-          add_new_osd auto
+          run_osds
           ;;
         DELETE)
           log_info "Remove ${hotplug_disk}"
