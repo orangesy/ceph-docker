@@ -187,7 +187,7 @@ function crush_initialization () {
 function auto_change_crush () {
   # DO NOT EDIT DEFAULT POOL
   DEFAULT_POOL=rbd
-  : ${CRUSH_TYPE:=safety}
+  : ${CRUSH_TYPE:=space}
   : ${PGs_PER_OSD:=64}
 
   # If there are no osds, We don't change pg_num
@@ -331,6 +331,12 @@ function osd_controller_env () {
   etcdctl mk ${CLUSTER_PATH}/max_osd_num_per_node 1 &>/dev/null || true
 }
 
+function run_osds () {
+  start_all_osds
+  add_new_osd auto
+  auto_change_crush
+}
+
 function start_all_osds () {
   # get all avail disks
   local DISKS=$(get_avail_disks)
@@ -345,8 +351,6 @@ function start_all_osds () {
       activate_osd $disk
     fi
   done
-
-  add_new_osd auto
 }
 
 function activate_osd () {
@@ -464,8 +468,6 @@ function add_new_osd () {
       log_err "OSD ${disk} fail to activate."
     fi
   done
-  # after add osd, resize pg_num
-  auto_change_crush
 }
 
 function calc_osd2add () {
@@ -564,6 +566,10 @@ function stop_all_osds () {
   ${DOCKER_CMD} stop $(${DOCKER_CMD} ps -fq LABEL=CEPH=osd)
 }
 
+function restart_all_osds () {
+  ${DOCKER_CMD} restart $(${DOCKER_CMD} ps -fq LABEL=CEPH=osd)
+}
+
 function is_osd_running () {
   # give a disk and check OSD container
   if [ -z "$1" ]; then
@@ -640,8 +646,7 @@ function hotplug_OSD () {
     if [[ "${hotplug_disk}" =~ /dev/sd[a-z]$ ]]; then
       case "${action}" in
         CREATE)
-          start_all_osds
-          add_new_osd auto
+          run_osds
           ;;
         DELETE)
           log_info "Remove ${hotplug_disk}"

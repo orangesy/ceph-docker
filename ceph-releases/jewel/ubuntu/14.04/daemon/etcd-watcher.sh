@@ -12,8 +12,7 @@ else
   max_osd_num=$ETCD_WATCH_VALUE
   echo "max_osd_num: $max_osd_num"
 
-  /entrypoint.sh osd_ctrl start_all_osds
-  /entrypoint.sh osd_ctrl add_new_osd auto
+  /entrypoint.sh osd_ctrl run_osds
 fi
 
 
