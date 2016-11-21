@@ -187,7 +187,7 @@ function crush_initialization () {
 function auto_change_crush () {
   # DO NOT EDIT DEFAULT POOL
   DEFAULT_POOL=rbd
-  : ${CRUSH_TYPE:=safety}
+  : ${CRUSH_TYPE:=space}
   : ${PGs_PER_OSD:=64}
 
   # If there are no osds, We don't change pg_num
@@ -562,6 +562,10 @@ function get_active_osd_nums () {
 
 function stop_all_osds () {
   ${DOCKER_CMD} stop $(${DOCKER_CMD} ps -fq LABEL=CEPH=osd)
+}
+
+function restart_all_osds () {
+  ${DOCKER_CMD} restart $(${DOCKER_CMD} ps -fq LABEL=CEPH=osd)
 }
 
 function is_osd_running () {
