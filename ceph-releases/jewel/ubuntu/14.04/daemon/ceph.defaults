@@ -17,7 +17,6 @@
 
 /global/mon_osd_full_ratio .95
 /global/mon_osd_nearfull_ratio .85
-/global/mon_host ceph-mon.ceph
 
 #mon
 /mon/mon_osd_down_out_interval 600
