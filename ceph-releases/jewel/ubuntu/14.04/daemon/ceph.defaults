@@ -24,6 +24,7 @@
 /mon/mon_clock_drift_allowed .15
 /mon/mon_clock_drift_warn_backoff 30
 /mon/mon_osd_report_timeout 300
+/mon/mon_force_quorum_join true
 
 #osd
 /osd/osd_journal_size 100
