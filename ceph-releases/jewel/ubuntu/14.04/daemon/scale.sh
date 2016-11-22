@@ -30,36 +30,11 @@ function check_mon {
   CLUSTER_PATH=ceph-config/${CLUSTER}
   : ${K8S_IP:=${KV_IP}}
   : ${K8S_PORT:=8080}
-  check_mon_data_version
   check_single_mon
 }
 
-function check_mon_data_version {
-  timeout 20 ceph ${CEPH_OPTS} health || return 0
-
-  if [ ! -e /var/lib/ceph/mon/${CLUSTER}-${MON_NAME}/keyring ]; then
-    return 0
-  fi
-
-  ceph-mon -i ${MON_NAME} --extract-monmap /tmp/monmap
-  local local_version=$(monmaptool -p /tmp/monmap  | awk '/^epoch/ {print $2}')
-  local cluster_version=$(ceph ${CEPH_OPTS} mon dump | awk '/^epoch/ {print $2}')
-
-  # if local mon data is old, remove it.
-  if [ ${local_version} -lt ${cluster_version} ]; then
-    # cd /var/lib/ceph/mon/ && tar jcf ${MON_NAME}-$(date +%s).tar.bz2 ${CLUSTER}-*
-    rm -r /var/lib/ceph/mon/${CLUSTER}-${MON_NAME}
-  elif [ ${local_version} -gt ${cluster_version} ]; then
-    err_status "Monmap version in this container is newer then cluster's."
-  fi
-  rm /tmp/monmap
-}
-
 function check_single_mon {
-  # check again. if ceph is health then leave.
-  timeout 10 ceph ${CEPH_OPTS} health && return 0
-
-  # if MON has single_mon label on K8S then enter single mode
+  # if MON has single_mon kubernetes label then enter single mode
   if kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | grep -w "${K8S_IP}" | grep -w "single_mon=true" >/dev/null; then
     ceph-mon -i ${MON_NAME} --extract-monmap /tmp/monmap
 
@@ -204,7 +179,7 @@ function auto_change_crush () {
       break
     else
       log_warn "Auto_change_crush is locked by ${LOCKER_NAME}. Waiting..."
-      sleep 30
+      sleep 10
     fi
   done
 
@@ -241,6 +216,7 @@ function crush_type_space () {
   # RCs not greater than 2
   if [ ${NODEs} -eq "0" ]; then
     log_warn "No Storage Node, do nothing with changing crush_type"
+    return 0
   elif [ ${NODEs} -eq "1" ]; then
     ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 1
   else
@@ -263,6 +239,7 @@ function crush_type_safety () {
   # RCs not greater than 3
   if [ ${NODEs} -eq "0" ]; then
     log_warn "No Storage Node, do nothing with changing crush_type"
+    return 0
   elif [ ${NODEs} -lt "3" ]; then
     ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size ${NODEs}
   else
@@ -622,7 +599,7 @@ function is_osd_disk() {
 
 # Find disks not only unmounted but also non-ceph disks
 function get_avail_disks () {
-  BLOCKS=$(readlink /sys/class/block/* -e | sed -n "s/\(.*ata[0-9]\{,2\}\).*\/\(sd[a-z]\)$/\2/p")
+  BLOCKS=$(readlink /sys/class/block/* -e | grep -v "usb" | grep -o "sd[a-z]$")
   [[ -n "${BLOCKS}" ]] || ( echo "" ; return 1 )
 
   while read disk ; do
