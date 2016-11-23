@@ -561,7 +561,7 @@ function osd_activate {
 
   # ceph-disk activiate has exec'ed /usr/bin/ceph-osd ${CEPH_OPTS} -f -d -i ${OSD_ID}
   # wait till docker stop or ceph-osd is killed
-  OSD_PID=$(pgrep -U ceph -f "^/usr/bin/ceph-osd \-\-cluster ${CLUSTER}.*\-i ${OSD_ID} \-\-setuser") || true
+  OSD_PID=$(ps -ef |grep ceph-osd |grep osd.${OSD_ID}.pid |awk '{print $2}') || true
   if [ -n "${OSD_PID}" ]; then
       echo "OSD (PID ${OSD_PID}) is running, waiting till it exits"
       while [ -e /proc/${OSD_PID} ]; do sleep 1;done
@@ -969,7 +969,7 @@ function osd_controller () {
   start_config
   crush_initialization
   osd_controller_env
-  start_all_osds
+  run_osds
 
   echo "Start etcd osd watcher"
   /bin/bash -c "/bin/bash /etcd-watcher.sh init" &
