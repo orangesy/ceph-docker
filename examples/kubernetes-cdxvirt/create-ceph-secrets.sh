@@ -5,12 +5,12 @@
   : ${SECRET_NAMESPACE:="default"}
   : ${OUTPUT:="ceph-secrets.yaml"}
 
-USAGE="Usage: $0 [ceph_namespace] [ceph-mon-label] [secret_namespace]
+USAGE="Usage: -n [ceph_namespace] -l [ceph-mon-label] -s [secret_namespace] -f [output_filename]
 
-    -n ceph_namespace   [default: ${NAMESPACE}]
-    -l ceph-mon-label   [default: ${LABLE}]
-    -s secret_namespace [default: ${SECRET_NAMESPACE}]
-    -f output_filename  [default: ${OUTPUT}]
+    ceph_namespace   [default: ${NAMESPACE}]
+    ceph-mon-label   [default: ${LABLE}]
+    secret_namespace [default: ${SECRET_NAMESPACE}]
+    output_filename  [default: ${OUTPUT}]
 "
 
   while getopts "n:l:s:h" OPTION
