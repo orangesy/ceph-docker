@@ -47,7 +47,7 @@ spec:
             - name: "DAEMON_VERSION"
               value: "cdxvirt/ceph-daemon:latest"
             - name: "DEBUG_MODE"
-              value: "true"
+              value: "false"
             - name: "CRUSH_TYPE"
               value: "space"
             - name: "PGs_PER_OSD"

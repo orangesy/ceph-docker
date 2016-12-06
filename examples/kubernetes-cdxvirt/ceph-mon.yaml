@@ -27,11 +27,11 @@ spec:
           args: ["mon"]
           env:
             - name: "CEPH_PUBLIC_NETWORK"
-              value: "172.18.0.0/24"
+              value: "192.168.32.0/23"
             - name: "CEPH_CLUSTER_NETWORK"
-              value: "172.17.0.0/24"
+              value: "192.168.32.0/23"
             - name: "K8S_NETWORK"
-              value: "172.17.0.0/24"
+              value: "192.168.32.0/23"
             - name: "DEBUG_MODE"
               value: "false"
             - name: "KV_TYPE"
