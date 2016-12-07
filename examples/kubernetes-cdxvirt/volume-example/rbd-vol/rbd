@@ -1,0 +1,5 @@
+#!/bin/sh
+
+docker run --rm --privileged=true --net=host --pid=host \
+  -v /dev/:/dev/ -v /etc/ceph:/etc/ceph -v /lib/modules/:/lib/modules/ \
+  cdxvirt/ceph-daemon:latest rbd "$@"

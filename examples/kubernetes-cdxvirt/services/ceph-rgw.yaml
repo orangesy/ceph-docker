@@ -1,28 +1,32 @@
 kind: DaemonSet
 apiVersion: extensions/v1beta1
 metadata:
-  name: ceph-fs
+  name: ceph-rgw
   namespace: ceph
 spec:
   template:
     metadata:
       labels:
-        name: ceph-fs
+        name: ceph-rgw
     spec:
       hostNetwork: true
       nodeSelector:
-        ceph_fs: "true"
+        cdxvirt/ceph_rgw: "true"
       volumes:
         - name: localtime
           hostPath:
             path: /etc/localtime
       containers:
-        - name: ceph-fs-pod
+        - name: ceph-rgw-pod
           image: cdxvirt/ceph-daemon:latest
-          args: ["mds"]
+          args: ["rgw"]
           env:
-            - name: "CEPHFS_CREATE"
-              value: "1"
+            - name: "RGW_CIVETWEB_PORT"
+              value: "18080"
+            - name: "RESTAPI_PORT"
+              value: "5000"
+            - name: "RESTAPI_IP"
+              value: "0.0.0.0"
             - name: "DEBUG_MODE"
               value: "false"
             - name: "KV_TYPE"
@@ -33,5 +37,5 @@ spec:
             - name: localtime
               mountPath: /etc/localtime
           ports:
-            - containerPort: 6704
-              hostPort: 6704
+            - containerPort: 6703
+              hostPort: 6703
