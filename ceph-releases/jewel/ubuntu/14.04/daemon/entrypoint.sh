@@ -1100,11 +1100,6 @@ case "$CEPH_DAEMON" in
   mon_controller)
     mon_controller
     ;;
-  osd_ctrl)
-    osd_controller_env
-    shift
-    $@
-    ;;
   snapshot)
     rbd_snapshot
     ;;
@@ -1120,8 +1115,13 @@ case "$CEPH_DAEMON" in
     exit 1
   fi
 
-  start_config
-  exec $@
+  if [ $0 == $(which ceph-api) ]; then
+    osd_controller_env
+    $@
+  else
+    start_config
+    exec $@
+  fi
   ;;
 esac
 
