@@ -56,42 +56,142 @@ function mon_controller {
   : ${K8S_IP:=https://${KUBERNETES_SERVICE_HOST}}
   : ${K8S_PORT:=${KUBERNETES_SERVICE_PORT}}
   : ${K8S_CERT:="--certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"}
+  : ${NAMESPACE:=ceph}
+  : ${POD_LABLE:="ceph-mon"}
+  : ${EP_SVC:="ceph-mon"}
 
-  etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH} > /dev/null 2>&1 || log_warn "CLUSTER_PATH already exists"
+  # making sure the root dirs are present
+  etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH} > /dev/null 2>&1 || true
   etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons ${MAX_MONS} > /dev/null 2>&1
-  etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH}/mon_list > /dev/null 2>&1  || log_warn "mon_list already exists"
-
-  # if node have cdxvirt/ceph_mon=true label, then add it into mon_list.
-  get_mon_label
-  for node in ${nodes_have_mon_label}; do etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/mon_list/${node} ${node} >/dev/null 2>&1; log_success "Add ${node} to mon_list"; done
+  etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH}/mon_host > /dev/null 2>&1  || true
 
   while [ true ]; do
-    get_mon_label
-    check_mon_list
+    mon_controller_main
     sleep 60
   done
 }
 
-function check_mon_list {
-  if [ "${MAX_MONS}" -eq "0" ]; then
-    return 0
+function mon_controller_main {
+  # get $MAX_MONS & check it matching positive number
+  re="^[1-9][0-9]*$"
+  if MAX_MONS=$(etcdctl -C ${KV_IP}:${KV_PORT} get ${CLUSTER_PATH}/max_mons); then
+    if ! [[ "${MAX_MONS}" =~ $re ]]; then
+      log_err "MAX_MONS type error: ${MAX_MONS}"
+      return 0
+    fi
+  else
+    log_err "Can't read max_mons"
   fi
 
-  until [ $(current_mons) -ge "${MAX_MONS}" ] || [ -z "${nodes_without_mon_label}" ]; do
-    local node_to_add=$(echo ${nodes_without_mon_label} | awk '{ print $1 }')
-    etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/mon_list/${node_to_add} ${node_to_add} >/dev/null 2>&1
-    kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} ${node_to_add} cdxvirt/ceph_mon=true --overwrite >/dev/null 2>&1 && log_success "Add ${node_to_add} to mon_list"
-    get_mon_label
+  get_mon_nodes
+
+  # how many mons needs to add?
+  current_mons=$(echo ${nodes_have_mon_label} | wc -w)
+  if [ ${current_mons} -lt "${MAX_MONS}" ]; then
+    local mon_num2add=$(expr ${MAX_MONS} - ${current_mons})
+  else
+    local mon_num2add=0
+  fi
+
+  # create kubernetes mon label
+  local COUNTER=0
+  for mon2add in ${nodes_no_mon_label}; do
+    if [ "${COUNTER}" -lt ${mon_num2add} ]; then
+      kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} ${mon2add} \
+        cdxvirt/ceph_mon=true --overwrite &>/dev/null && log_success "Add Mon node \"${mon2add}\""
+      let COUNTER=COUNTER+1
+    fi
   done
+
+  # make sure svc & ep service are running.
+  if kubectl get ep ${EP_SVC} --namespace=${NAMESPACE} &>/dev/null; then
+    update_ceph_mon_ep
+  fi
 }
 
-function current_mons {
-  etcdctl -C ${KV_IP}:${KV_PORT} ls ${CLUSTER_PATH}/mon_list | wc -l
+function get_mon_nodes {
+  nodes_have_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} \
+    | awk '/Ready/ { print $1 " " $4 }' | awk '/cdxvirt\/ceph_mon=true/ { print $1 }')
+  nodes_no_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} \
+    | awk '/Ready/ { print $1 " " $4 }' | awk '!/cdxvirt\/ceph_mon=true/ { print $1 }')
+  etcd_mon_host=$(etcdctl -C ${KV_IP}:${KV_PORT} ls ${CLUSTER_PATH}/mon_host | sed "s#.*/mon_host/##")
+  running_mon_pods=$(kubectl --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} get pod --namespace=${NAMESPACE} \
+    -l name=${POD_LABLE} | sed '1d' | awk '/Running/ { print $1 }')
+  # if mon_pod in other status.
+  other_mon_pods=$(kubectl --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} get pod --namespace=${NAMESPACE} \
+    -l name=${POD_LABLE} | sed '1d' | awk '!/Running/ { print $1 }')
 }
 
-function get_mon_label {
-  nodes_have_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} | awk '/Ready/ { print $1 " " $4 }' | awk '/cdxvirt\/ceph_mon=true/ { print $1 }')
-  nodes_without_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} | awk '/Ready/ { print $1 " " $4 }' | awk '!/cdxvirt\/ceph_mon=true/ { print $1 }')
+function update_ceph_mon_ep {
+  local ep_list=""
+  for mon_name in $(echo ${etcd_mon_host}); do
+    local mon_ip=$(mon_name_2_mon_ip ${mon_name})
+    # josn form needs ","
+    if [ -z "${mon_ip}" ]; then
+      log_warn "Can't get mon_ip from ${mon_name}"
+    elif [ -z "${ep_list}" ]; then
+      local mon_ip_ep_format="{\"ip\": \"${mon_ip}\"}"
+      ep_list=${mon_ip_ep_format}
+    else
+      local mon_ip_ep_format="{\"ip\": \"${mon_ip}\"}"
+      ep_list="${ep_list}, ${mon_ip_ep_format}"
+    fi
+  done
+
+
+  # make sure ep_list is not null
+  if [ -n "${ep_list}" ]; then
+    local UPDATE_EP="kubectl --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} \
+       --namespace=${NAMESPACE} patch ep ${EP_SVC} -p \
+      '{\"subsets\": [{\"addresses\": [${ep_list}],\"ports\": [{\"port\": 6789,\"protocol\": \"TCP\"}]}]}'"
+    eval $UPDATE_EP >/dev/null
+  fi
+}
+
+function node_ip_2_pod_name {
+  if [ -z $1 ]; then
+    log_err "Usage: node_ip_2_pod_name kubernetes_IP"
+    exit 1
+  fi
+  kubectl get pod -o wide --namespace=${NAMESPACE} -l name=${POD_LABLE} | grep -w "$1" | awk '{ print $1 }'
+}
+
+function pod_name_2_mon_name {
+  if [ -z $1 ]; then
+    log_err "Usage: pod_name_2_hostname pod_name"
+    exit 1
+  fi
+  kubectl exec --namespace=${NAMESPACE} $1 hostname 2>/dev/null
+}
+
+function mon_name_2_mon_ip {
+  if [ -z $1 ]; then
+    log_err "Usage: mon_name_2_mon_ip mon_name"
+    exit 1
+  fi
+  etcdctl -C ${KV_IP}:${KV_PORT} get ${CLUSTER_PATH}/mon_host/$1 2>/dev/null | sed 's/:6789//'
+}
+
+function set_max_mon () {
+  if [ -z "$1" ]; then
+    log_err "Usage: set_max_mon 1~5+"
+  fi
+  if etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons $1; then
+    log_success "Expect MON number is \"$1\"."
+  else
+    log_err "Fail to set \$MAX_MONS"
+    return 1
+  fi
+}
+
+function get_max_mon {
+  local MAX_MONS=""
+  if MAX_MONS=$(etcdctl -C ${KV_IP}:${KV_PORT} get ${CLUSTER_PATH}/max_mons); then
+    echo "${MAX_MONS}"
+  else
+    log_err "Fail to get \$MAX_MONS"
+    return 1
+  fi
 }
 
 function crush_initialization () {
@@ -531,7 +631,7 @@ function set_max_osd () {
 
 function get_max_osd {
   local MAX_OSDS=""
-  if MAX_OSDS=$(etcdctl get ${CLUSTER_PATH}/max_osd_num_per_node ${MAX_OSDS}); then
+  if MAX_OSDS=$(etcdctl get ${CLUSTER_PATH}/max_osd_num_per_node); then
     echo "${MAX_OSDS}"
   else
     log_err "Fail to get max_osd_num_per_node"
