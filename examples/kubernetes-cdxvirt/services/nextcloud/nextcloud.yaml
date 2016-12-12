@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud
+  labels:
+    name: nextcloud
+spec:
+  type: NodePort
+  ports:
+    - port: 8888
+      nodePort: 8888
+  selector:
+    name: nextcloud
+---
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: nextcloud
+spec:
+  replicas: 1
+  template:
+    metadata:
+      name: nextcloud
+      labels:
+        name: nextcloud
+    spec:
+      nodeSelector:
+        ceph_mon: "true"
+      containers:
+      - name: nextcloud
+        image: develop/nextcloud:10.0
+        env:
+          - name: "trusted_domains"
+            value: "*"
+          - name: "UID"
+            value: "1000"
+          - name: "GID"
+            value: "1000"
+          - name: "UPLOAD_MAX_SIZE"
+            value: "10G"
+          - name: "APC_SHM_SIZE"
+            value: "128M"
+          - name: "OPCACHE_MEM_SIZE"
+            value: "128"
+          - name: "REDIS_MAX_MEMORY"
+            value: "64mb"
+          - name: "CRON_PERIOD"
+            value: "15m"
+          - name: "TZ"
+            value: "Etc/UTC"
+          - name: "ADMIN_USER"
+            value: "admin"
+          - name: "ADMIN_PASSWORD"
+            value: "admin"
+          - name: "DB_TYPE"
+            value: "mysql"
+          - name: "DB_NAME"
+            value: "nextcloud"
+          - name: "DB_USER"
+            value: "nextcloud"
+          - name: "DB_PASSWORD"
+            value: "supersecretpassword"
+          - name: "DB_HOST"
+            value: "nextcloud-db"
+        ports:
+        - containerPort: 8888
+          hostPort: 8888
+        volumeMounts:
+        - name: nextcloud-data
+          mountPath: /data
+        - name: nextcloud-config
+          mountPath: /config
+        - name: nextcloud-apps
+          mountPath: /apps2
+      volumes:
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: nextcloud-data-pvc
+        - name: nextcloud-config
+          persistentVolumeClaim:
+            claimName: nextcloud-config-pvc
+        - name: nextcloud-apps
+          persistentVolumeClaim:
+            claimName: nextcloud-apps-pvc

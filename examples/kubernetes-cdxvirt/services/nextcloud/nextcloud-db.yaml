@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud-db
+  labels:
+    name: nextcloud-db
+spec:
+  ports:
+    - port: 3306
+  selector:
+    name: nextcloud-db
+---
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: nextcloud-db
+spec:
+  replicas: 1
+  selector:
+    name: nextcloud-db
+  template:
+    metadata:
+      name: nextcloud-db
+      labels:
+        name: nextcloud-db
+    spec:
+      volumes:
+        - name: nextcloud-db
+          persistentVolumeClaim:
+            claimName: nextcloud-db-pvc
+      containers:
+      - name: nextcloud-db
+        image: mariadb:10
+        env:
+          - name: "MYSQL_ROOT_PASSWORD"
+            value: "supersecretpassword"
+          - name: "MYSQL_DATABASE"
+            value: "nextcloud"
+          - name: "MYSQL_USER"
+            value: "nextcloud"
+          - name: "MYSQL_PASSWORD"
+            value: "supersecretpassword"
+        volumeMounts:
+        - name: nextcloud-db
+          mountPath: /var/lib/mysql
