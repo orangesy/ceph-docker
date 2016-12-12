@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nextcloud-db-pv 
+  labels:
+    img: nextcloud-db
+spec:
+  capacity:
+    storage: 2Gi 
+  accessModes:
+    - ReadWriteOnce 
+  rbd: 
+    monitors: 
+      - 192.168.33.64:6789
+      - 192.168.33.65:6789
+      - 192.168.33.66:6789
+    pool: rbd
+    image: nextcloud-db
+    user: admin
+    secretRef:
+      name: ceph-secret 
+    fsType: ext4 
+    readOnly: false
+  persistentVolumeReclaimPolicy: Retain
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: nextcloud-db-pvc
+spec:
+  accessModes: 
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi 
+  selector:
+    matchLabels:
+      img: "nextcloud-db"
