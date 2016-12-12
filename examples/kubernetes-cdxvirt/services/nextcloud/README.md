@@ -9,7 +9,7 @@
 - `rbd create nextcloud-data --size 2048`
 - `rbd create nextcloud-db --size 2048`
 - `docker build -t develop/nextcloud:10.0 .`
--PV's yaml ceph mon IP
+- PV's yaml ceph mon IP
 
 ## Create Nextcloud
 
