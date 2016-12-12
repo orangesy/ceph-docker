@@ -14,6 +14,9 @@ ADD ./confd/conf.d/* /etc/confd/conf.d/
 # Add bootstrap script, ceph defaults key/values for KV store
 ADD entrypoint.sh config.*.sh ceph.defaults check_zombie_mons.py remove-mon.sh scale.sh etcd-watcher.sh /
 
+# symbolic link for ceph-api
+RUN ln -s /entrypoint.sh /usr/local/bin/ceph-api
+
 # Add volumes for Ceph config and data
 VOLUME ["/etc/ceph","/var/lib/ceph", "/etc/ganesha"]
 
