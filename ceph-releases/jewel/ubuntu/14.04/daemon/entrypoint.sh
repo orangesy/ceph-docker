@@ -280,6 +280,8 @@ function start_mon {
 
     # Clean up the temporary key
     rm /tmp/${CLUSTER}.mon.keyring
+  else
+    ceph-mon -i ${MON_NAME} --inject-monmap /etc/ceph/monmap-${CLUSTER}
   fi
 
   # start MON
@@ -1116,8 +1118,7 @@ case "$CEPH_DAEMON" in
   fi
 
   if [ $0 == $(which ceph-api) ]; then
-    osd_controller_env
-    $@
+    ceph_api $@
   else
     start_config
     exec $@
