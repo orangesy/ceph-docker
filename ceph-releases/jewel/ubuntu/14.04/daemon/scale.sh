@@ -81,8 +81,8 @@ function mon_controller () {
   # making sure the root dirs are present
   : ${MAX_MONS:=3}
   etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH} > /dev/null 2>&1 || true
-  etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons ${MAX_MONS} > /dev/null 2>&1
   etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH}/mon_host > /dev/null 2>&1  || true
+  set_max_mon ${MAX_MONS} init
 
   while [ true ]; do
     mon_controller_main
@@ -108,19 +108,26 @@ function mon_controller_main () {
   current_mons=$(echo ${nodes_have_mon_label} | wc -w)
   if [ ${current_mons} -lt "${MAX_MONS}" ]; then
     local mon_num2add=$(expr ${MAX_MONS} - ${current_mons})
+  elif [ ${current_mons} -gt "${MAX_MONS}" ]; then
+    local mon_num2add="-1"
   else
     local mon_num2add=0
   fi
 
   # create kubernetes mon label
   local COUNTER=0
-  for mon2add in ${nodes_no_mon_label}; do
-    if [ "${COUNTER}" -lt ${mon_num2add} ]; then
-      kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} ${mon2add} \
-        cdxvirt/ceph_mon=true --overwrite &>/dev/null && log_success "Add Mon node \"${mon2add}\""
-      let COUNTER=COUNTER+1
-    fi
-  done
+  if [ ${mon_num2add} == "-1" ]; then
+    auto_remove_mon
+  else
+    local COUNTER=0
+    for mon2add in ${nodes_no_mon_label}; do
+      if [ "${COUNTER}" -lt ${mon_num2add} ]; then
+        kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} ${mon2add} \
+          cdxvirt/ceph_mon=true --overwrite &>/dev/null && log_success "Add Mon node \"${mon2add}\""
+        let COUNTER=COUNTER+1
+      fi
+    done
+  fi
 
   # make sure svc & ep service are running.
   if kubectl get ep ${EP_SVC} --namespace=${NAMESPACE} &>/dev/null; then
@@ -206,14 +213,40 @@ function remove_mon () {
       ceph mon remove "${mon_name}" || true
     fi
   done
+  until confd -onetime -backend ${KV_TYPE} -node ${CONFD_NODE_SCHEMA}${KV_IP}:${KV_PORT} ${CONFD_KV_TLS} -prefix="/${CLUSTER_PATH}/" ; do
+    echo "Waiting for confd to update templates..."
+    sleep 1
+  done
+}
+
+function auto_remove_mon () {
+  start_config
+
+  # get the last mon quorum index
+  local mon_count=$(ceph quorum_status | jq .quorum | sed '1d;$d' | wc -w)
+  local mon_quorum_json_index=$(expr ${mon_count} - 1)
+  local mon_name2remove=$(ceph quorum_status | jq .quorum_names[${mon_quorum_json_index}] | tr -d "\"")
+  if [ -z ${mon_name2remove} ]; then
+    log_err "Monitor name not found"
+    return 0
+  elif [ "${mon_count}" -le 2 ]; then
+    log_warn "Monitor number is too low. (Only \"${mon_count}\" monitor)"
+    return 0
+  else
+    remove_mon ${mon_name2remove}
+  fi
 }
 
 function set_max_mon () {
-  if [ -z "$1" ]; then
+  if [ $# -eq "2" ] && [ $2 == "init" ]; then
+    local max_mon_num=$1
+    etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/max_mons ${max_mon_num} &>/dev/null || true
+    return 0
+  elif [ -z "$1" ]; then
     log_err "Usage: set_max_mon 1~5+"
     exit 1
   fi
-  if etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons $1; then
+  if etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons ${max_mon_num}; then
     log_success "Expect MON number is \"$1\"."
   else
     log_err "Fail to set \$MAX_MONS"
