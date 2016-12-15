@@ -84,6 +84,11 @@ function mon_controller () {
   etcdctl -C ${KV_IP}:${KV_PORT} mkdir ${CLUSTER_PATH}/mon_host > /dev/null 2>&1  || true
   set_max_mon ${MAX_MONS} init
 
+  # if svc & ep is running, than set mon_host
+  if kubectl get ep ${EP_SVC} --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} --namespace=${NAMESPACE} &>/dev/null; then
+    etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/global/mon_host ${EP_SVC}.${NAMESPACE}
+  fi
+
   while [ true ]; do
     mon_controller_main
     sleep 60
@@ -129,8 +134,8 @@ function mon_controller_main () {
     done
   fi
 
-  # make sure svc & ep service are running.
-  if kubectl get ep ${EP_SVC} --namespace=${NAMESPACE} &>/dev/null; then
+  # update endpoints
+  if kubectl get ep ${EP_SVC} --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} --namespace=${NAMESPACE} &>/dev/null; then
     update_ceph_mon_ep
   fi
 }
@@ -273,6 +278,11 @@ function crush_initialization () {
   # Default crush leaf [ osd | host ] & replication size 1 ~ 9
   : ${DEFAULT_CRUSH_LEAF:=osd}
   : ${DEFAULT_POOL_COPIES:=1}
+
+  # check ceph command is usable
+  until timeout 10 ceph health &>/dev/null; do
+    log_warn "Waitiing for ceph cluster is ready."
+  done
 
   # set lock to avoid multiple node writting together
   until etcdctl -C ${KV_IP}:${KV_PORT} mk ${CLUSTER_PATH}/osd_init_lock ${HOSTNAME} > /dev/null 2>&1; do

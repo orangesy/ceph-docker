@@ -1032,6 +1032,7 @@ if [ ${DEBUG_MODE} == "true" ]; then
     set -x
 fi
 source /scale.sh
+echo -e "search ceph.svc.cluster.local svc.cluster.local cluster.local\nnameserver 10.0.0.10\noptions ndots:5" > /etc/resolv.conf
 if [ ${KV_TYPE} == "etcd" ]; then
     check_KV_IP
 fi
