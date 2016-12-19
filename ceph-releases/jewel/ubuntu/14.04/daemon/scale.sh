@@ -250,6 +250,8 @@ function set_max_mon () {
   elif [ -z "$1" ]; then
     log_err "Usage: set_max_mon 1~5+"
     exit 1
+  else
+    local max_mon_num=$1
   fi
   if etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/max_mons ${max_mon_num}; then
     log_success "Expect MON number is \"$1\"."
