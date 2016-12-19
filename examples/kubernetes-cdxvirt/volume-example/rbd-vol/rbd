@@ -1,5 +1,16 @@
 #!/bin/sh
 
-docker run --rm --privileged=true --net=host --pid=host \
+command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
+DOCKER_CMD=$(command -v docker)
+CEPH_IMG="cdxvirt/ceph-daemon:latest"
+
+if [[ $1 == "init" ]]; then
+  ${DOCKER_CMD} run --rm --privileged=true --net=host --pid=host \
   -v /dev/:/dev/ -v /etc/ceph:/etc/ceph -v /lib/modules/:/lib/modules/ \
-  cdxvirt/ceph-daemon:latest rbd "$@"
+  -e KV_TYPE=etcd -e KV_PORT=2379 ${CEPH_IMG} bash
+  exit 0
+fi
+
+${DOCKER_CMD} run --rm --privileged=true --net=host --pid=host \
+  -v /dev/:/dev/ -v /etc/ceph:/etc/ceph -v /lib/modules/:/lib/modules/ \
+  ${CEPH_IMG} rbd "$@"
