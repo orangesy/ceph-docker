@@ -5,12 +5,12 @@ DOCKER_CMD=$(command -v docker)
 CEPH_IMG="cdxvirt/ceph-daemon:latest"
 
 if [[ $1 == "init" ]]; then
-  ${DOCKER_CMD} run --rm --privileged=true --net=host --pid=host \
+  LD_LIBRARY_PATH=/lib:/host/lib ${DOCKER_CMD} run --rm --privileged=true --net=host --pid=host \
   -v /dev/:/dev/ -v /etc/ceph:/etc/ceph -v /lib/modules/:/lib/modules/ \
   -e KV_TYPE=etcd -e KV_PORT=2379 ${CEPH_IMG} bash
   exit 0
 fi
 
-${DOCKER_CMD} run --rm --privileged=true --net=host --pid=host \
+LD_LIBRARY_PATH=/lib:/host/lib ${DOCKER_CMD} run --rm --privileged=true --net=host --pid=host \
   -v /dev/:/dev/ -v /etc/ceph:/etc/ceph -v /lib/modules/:/lib/modules/ \
   ${CEPH_IMG} rbd "$@"
