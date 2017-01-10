@@ -67,8 +67,7 @@ spec:
             successThreshold: 1
             exec:
               command:
-              - pidof
-              - etcdctl
+              - /liveprobe.sh
             timeoutSeconds: 5
           volumeMounts:
             - name: docker
