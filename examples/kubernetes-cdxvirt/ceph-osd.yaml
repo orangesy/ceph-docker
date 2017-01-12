@@ -19,18 +19,9 @@ spec:
         - name: docker-sock
           hostPath:
             path: /var/run/docker.sock
-        - name: libsystemd
+        - name: hostlib
           hostPath:
-            path: /lib64/libsystemd.so.0
-        - name: libdevmapper
-          hostPath:
-            path: /lib64/libdevmapper.so
-        - name: libgcrypt
-          hostPath:
-            path: /lib64/libgcrypt.so
-        - name: libgpg-error
-          hostPath:
-            path: /lib64/libgpg-error.so
+            path: /usr/lib64
         - name: dev
           hostPath:
             path: /dev/
@@ -74,14 +65,8 @@ spec:
               mountPath: /bin/docker
             - name: docker-sock
               mountPath: /var/run/docker.sock
-            - name: libsystemd
-              mountPath: /lib/x86_64-linux-gnu/libsystemd.so.0
-            - name: libdevmapper
-              mountPath: /lib/x86_64-linux-gnu/libdevmapper.so.1.02
-            - name: libgcrypt
-              mountPath: /lib/x86_64-linux-gnu/libgcrypt.so.20
-            - name: libgpg-error
-              mountPath: /lib/x86_64-linux-gnu/libgpg-error.so.0
+            - name: hostlib
+              mountPath: /host/lib
             - name: dev
               mountPath: /dev/
             - name: localtime
