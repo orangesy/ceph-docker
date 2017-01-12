@@ -885,3 +885,20 @@ function clear_raid_disks () {
   done
 }
 
+function docker(){
+  local DEBUG && [[ "$-" == *x* ]] && DEBUG="true" && set +x
+
+  local ARGS=""
+  for ARG in "$@"; do
+    if [[ -n "$(echo "${ARG}" | grep '{.*}' | jq . 2>/dev/null)" ]]; then
+      ARGS="${ARGS} \"$(echo ${ARG} | jq -c . | sed "s/\"/\\\\\"/g")\""
+    elif [[ "$(echo "${ARG}" | wc -l)" -gt "1" ]]; then
+      ARGS="${ARGS} \"$(echo "${ARG}" | sed "s/\"/\\\\\"/g")\""
+    else
+      ARGS="${ARGS} ${ARG}"
+    fi
+  done
+  [[ "${DEBUG}" == "true" ]] && set -x
+
+  bash -c "LD_LIBRARY_PATH=/lib:/host/lib $(which docker) ${ARGS}"
+}
