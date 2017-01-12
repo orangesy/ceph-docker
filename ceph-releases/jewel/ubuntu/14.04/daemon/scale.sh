@@ -886,8 +886,6 @@ function clear_raid_disks () {
 }
 
 function docker(){
-  local DEBUG && [[ "$-" == *x* ]] && DEBUG="true" && set +x
-
   local ARGS=""
   for ARG in "$@"; do
     if [[ -n "$(echo "${ARG}" | grep '{.*}' | jq . 2>/dev/null)" ]]; then
