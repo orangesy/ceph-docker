@@ -46,12 +46,13 @@ function check_mon {
   CLUSTER_PATH=ceph-config/${CLUSTER}
   : ${K8S_IP:=${KV_IP}}
   : ${K8S_PORT:=8080}
+  : ${MON_RECOVERY_LABEL:="cdxvirt/recovery"}
   check_single_mon
 }
 
 function check_single_mon {
   # if MON has single_mon kubernetes label then enter single mode
-  if kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | grep -w "${K8S_IP}" | grep -w "cdxvirt/single_mon=true" >/dev/null; then
+  if kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} | grep -w "${K8S_IP}" | grep -w "${MON_RECOVERY_LABEL}=true" >/dev/null; then
     ceph-mon -i ${MON_NAME} --extract-monmap /tmp/monmap
 
     # remove all monmap list then add itself
@@ -61,7 +62,7 @@ function check_single_mon {
     done
     monmaptool --add ${MON_NAME} ${MON_IP}:6789 /tmp/monmap
     ceph-mon -i ${MON_NAME} --inject-monmap /tmp/monmap
-    kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_IP} cdxvirt/single_mon-
+    kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_IP} ${MON_RECOVERY_LABEL}-
     rm /tmp/monmap
   fi
 }
@@ -72,8 +73,9 @@ function mon_controller_env () {
   : ${K8S_PORT:=${KUBERNETES_SERVICE_PORT}}
   : ${K8S_CERT:="--certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"}
   : ${NAMESPACE:=ceph}
-  : ${POD_LABLE:="ceph-mon"}
-  : ${EP_SVC:="ceph-mon"}
+  : ${POD_SELECTOR:="ceph-mon"}
+  : ${EP_NAME:="ceph-mon"}
+  : ${MON_LABEL:="cdxvirt/ceph_mon"}
 }
 
 function mon_controller () {
@@ -85,8 +87,8 @@ function mon_controller () {
   set_max_mon ${MAX_MONS} init
 
   # if svc & ep is running, than set mon_host
-  if kubectl get ep ${EP_SVC} --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} --namespace=${NAMESPACE} &>/dev/null; then
-    etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/global/mon_host ${EP_SVC}.${NAMESPACE}
+  if kubectl get ep ${EP_NAME} --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} --namespace=${NAMESPACE} &>/dev/null; then
+    etcdctl -C ${KV_IP}:${KV_PORT} set ${CLUSTER_PATH}/global/mon_host ${EP_NAME}.${NAMESPACE}
   fi
 
   while [ true ]; do
@@ -120,31 +122,31 @@ function mon_controller_main () {
   fi
 
   # create kubernetes mon label
-  local COUNTER=0
+  local counter=0
   if [ ${mon_num2add} == "-1" ]; then
     auto_remove_mon
   else
-    local COUNTER=0
+    local counter=0
     for mon2add in ${nodes_no_mon_label}; do
-      if [ "${COUNTER}" -lt ${mon_num2add} ]; then
+      if [ "${counter}" -lt ${mon_num2add} ]; then
         kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} ${mon2add} \
-          cdxvirt/ceph_mon=true --overwrite &>/dev/null && log_success "Add Mon node \"${mon2add}\""
-        let COUNTER=COUNTER+1
+          ${MON_LABEL}=true --overwrite &>/dev/null && log_success "Add Mon node \"${mon2add}\""
+        let counter=counter+1
       fi
     done
   fi
 
   # update endpoints
-  if kubectl get ep ${EP_SVC} --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} --namespace=${NAMESPACE} &>/dev/null; then
+  if kubectl get ep ${EP_NAME} --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} --namespace=${NAMESPACE} &>/dev/null; then
     update_ceph_mon_ep
   fi
 }
 
 function get_mon_nodes () {
   nodes_have_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} \
-    | awk '/Ready/ { print $1 " " $4 }' | awk '/cdxvirt\/ceph_mon=true/ { print $1 }')
+    |  grep -w "${MON_LABEL}" | awk '/Ready/ { print $1 }')
   nodes_no_mon_label=$(kubectl get node --show-labels --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} \
-    | awk '/Ready/ { print $1 " " $4 }' | awk '!/cdxvirt\/ceph_mon=true/ { print $1 }')
+    |  grep -wv "${MON_LABEL}" | awk '/Ready/ { print $1 }')
   etcd_mon_host=$(etcdctl -C ${KV_IP}:${KV_PORT} ls ${CLUSTER_PATH}/mon_host | sed "s#.*/mon_host/##")
 }
 
@@ -167,7 +169,7 @@ function update_ceph_mon_ep () {
   # make sure ep_list is not null
   if [ -n "${ep_list}" ]; then
     local UPDATE_EP="kubectl --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} \
-       --namespace=${NAMESPACE} patch ep ${EP_SVC} -p \
+       --namespace=${NAMESPACE} patch ep ${EP_NAME} -p \
       '{\"subsets\": [{\"addresses\": [${ep_list}],\"ports\": [{\"port\": 6789,\"protocol\": \"TCP\"}]}]}'"
     eval $UPDATE_EP >/dev/null
   fi
@@ -178,7 +180,7 @@ function node_ip_2_pod_name () {
     log_err "Usage: node_ip_2_pod_name kubernetes_IP"
     exit 1
   fi
-  kubectl get pod -o wide --namespace=${NAMESPACE} -l name=${POD_LABLE} | grep -w "$1" | awk '{ print $1 }'
+  kubectl get pod -o wide --namespace=${NAMESPACE} -l name=${POD_SELECTOR} | grep -w "$1" | awk '{ print $1 }'
 }
 
 function node_ip_2_hostname () {
@@ -214,7 +216,7 @@ function remove_mon () {
     if [ "$1" == "${mon_name}" ]; then
       etcdctl -C ${KV_IP}:${KV_PORT} rm ${CLUSTER_PATH}/mon_host/${mon_name} &>/dev/null || true
       kubectl label node --server=${K8S_IP}:${K8S_PORT} ${K8S_CERT} ${mon_node} \
-        cdxvirt/ceph_mon- &>/dev/null
+        ${MON_LABEL}- &>/dev/null
       ceph mon remove "${mon_name}" || true
     fi
   done
@@ -643,11 +645,11 @@ function calc_osd2add () {
 }
 
 function select_n_disks () {
-  local COUNTER=0
+  local counter=0
   for disk in $1; do
-    if [ "${COUNTER}" -lt "$2" ]; then
+    if [ "${counter}" -lt "$2" ]; then
       osd_add_list="${osd_add_list} ${disk}"
-      let COUNTER=COUNTER+1
+      let counter=counter+1
     fi
   done
 }
