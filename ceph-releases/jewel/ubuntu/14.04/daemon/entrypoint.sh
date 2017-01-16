@@ -1103,6 +1103,10 @@ case "$CEPH_DAEMON" in
   mon_controller)
     mon_controller
     ;;
+  ceph-api)
+    shift
+    ceph_api $@
+    ;;
   snapshot)
     rbd_snapshot
     ;;

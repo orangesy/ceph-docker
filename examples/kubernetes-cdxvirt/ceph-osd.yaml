@@ -25,6 +25,9 @@ spec:
         - name: dev
           hostPath:
             path: /dev/
+        - name: opt-bin
+          hostPath:
+            path: /opt/bin/
         - name: localtime
           hostPath:
             path: /etc/localtime
@@ -69,5 +72,7 @@ spec:
               mountPath: /host/lib
             - name: dev
               mountPath: /dev/
+            - name: opt-bin
+              mountPath: /opt/bin/
             - name: localtime
               mountPath: /etc/localtime
