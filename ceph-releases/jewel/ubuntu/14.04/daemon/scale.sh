@@ -28,12 +28,15 @@ function log_warn() { log "$1" "WARN" "${LOG_WARN_COLOR}"; }
 
 function ceph_api () {
   case $1 in
-    start_all_osds|set_max_osd|get_max_osd|stop_all_osds|stop_all_osds)
+    start_all_osds|set_max_osd|get_max_osd|stop_all_osds|stop_all_osds|get_active_osd_nums)
       osd_controller_env
       $@
       ;;
     set_max_mon|get_max_mon|remove_mon)
       mon_controller_env
+      $@
+      ;;
+    get_osd_map)
       $@
       ;;
     *)
@@ -476,10 +479,8 @@ function osd_controller_env () {
   command -v docker > /dev/null 2>&1 || { echo "Command not found: docker"; exit 1; }
   DOCKER_CMD=$(command -v docker)
   DOCKER_VERSION=$($DOCKER_CMD -v | awk  /Docker\ version\ /'{print $3}')
-  # show docker version and check docker libraries load status
-  if [[ -n "${DOCKER_VERSION}" ]]; then
-    log_info "docker version ${DOCKER_VERSION}"
-  else
+  # check docker version
+  if ! [[ -n "${DOCKER_VERSION}" ]]; then
     $DOCKER_CMD -v
     exit 1
   fi
@@ -721,6 +722,70 @@ function get_max_osd {
     log_err "Fail to get max_osd_num_per_node"
     return 1
   fi
+}
+
+function get_slot_mapping {
+  if [ -z $1 ]; then
+    return 0
+  fi
+  printf '%s\n' "$avail_devs" | while IFS= read -r line
+  do
+    echo $"$line"
+  done | grep -w ^$1 | awk '{print $2}'
+}
+
+function get_dev_osdid {
+  if [ -z $1 ]; then
+    return 0
+  fi
+  local osd_cont_id=$(docker ps -f LABEL=CEPH=osd -fq LABEL=DEV_NAME="/dev/$1")
+  if [ ! -z ${osd_cont_id} ]; then
+    local osd_id=$(docker inspect --format='{{.Config.Labels.OSD_ID}}' "${osd_cont_id}" 2>/dev/null)
+  fi
+  re="^[0-9]+([.][0-9]+)?$"
+  if [[ ${osd_id} =~ $re ]]; then
+    echo ${osd_id}
+  fi
+}
+
+function get_dev_serial {
+  if [ -z $1 ]; then
+    return 0
+  fi
+  local dev_model=$(hdparm -I /dev/$1 2>/dev/null | awk '/Model Number/ {print $3}')
+  local dev_serial=$(hdparm -I /dev/$1 2>/dev/null | awk '/Serial Number/ {print $3}')
+  if [ -z ${dev_serial} ]; then
+    echo ${dev_model}
+  else
+    echo ${dev_model}_${dev_serial}
+  fi
+}
+
+function get_osd_map {
+  MAPPING_COMMAND="/opt/bin/mapping.sh"
+  command -v ${MAPPING_COMMAND} &>/dev/null || { echo "Command not found: \"${MAPPING_COMMAND}\"";exit 1; }
+  slot_list=$(${MAPPING_COMMAND} --list-all-slots)
+  avail_devs=$(${MAPPING_COMMAND} --list-all-disk-mappings)
+
+  # create json output
+  # begin
+  osd_map_json='{"node":['
+
+  local counter=1
+  local entries=$(echo $slot_list | wc -w)
+  for slot in ${slot_list}; do
+    dev_name=$(get_slot_mapping ${slot})
+    osd_id=$(get_dev_osdid ${dev_name})
+    disk_serial=$(get_dev_serial ${dev_name})
+    osd_map_json=${osd_map_json}'{"slot":"'$slot'","dev_name":"'${dev_name}'","osd_id":"'${osd_id}'","disk_serial":"'${disk_serial}'"}'
+    # add comma
+    if [ ${counter} -lt ${entries} ]; then
+      osd_map_json=${osd_map_json}','
+    fi
+    let counter=counter+1
+  done
+  osd_map_json=${osd_map_json}']}'
+  echo ${osd_map_json}
 }
 
 function get_active_osd_nums () {
