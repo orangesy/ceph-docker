@@ -738,7 +738,7 @@ function get_dev_osdid {
   if [ -z $1 ]; then
     return 0
   fi
-  local osd_cont_id=$(docker ps -f LABEL=CEPH=osd -fq LABEL=DEV_NAME="/dev/$1")
+  local osd_cont_id=$(docker ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME="/dev/$1")
   if [ ! -z ${osd_cont_id} ]; then
     local osd_id=$(docker inspect --format='{{.Config.Labels.OSD_ID}}' "${osd_cont_id}" 2>/dev/null)
   fi
@@ -789,15 +789,15 @@ function get_osd_map {
 }
 
 function get_active_osd_nums () {
-  ${DOCKER_CMD} ps -fq LABEL=CEPH=osd | wc -l
+  ${DOCKER_CMD} ps -q -f LABEL=CEPH=osd | wc -l
 }
 
 function stop_all_osds () {
-  ${DOCKER_CMD} stop $(${DOCKER_CMD} ps -fq LABEL=CEPH=osd)
+  ${DOCKER_CMD} stop $(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd)
 }
 
 function restart_all_osds () {
-  ${DOCKER_CMD} restart $(${DOCKER_CMD} ps -fq LABEL=CEPH=osd)
+  ${DOCKER_CMD} restart $(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd)
 }
 
 function is_osd_running () {
