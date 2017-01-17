@@ -28,7 +28,7 @@ function log_warn() { log "$1" "WARN" "${LOG_WARN_COLOR}"; }
 
 function ceph_api () {
   case $1 in
-    start_all_osds|set_max_osd|get_max_osd|stop_all_osds|stop_all_osds|get_active_osd_nums)
+    start_all_osds|set_max_osd|get_max_osd|stop_all_osds|stop_all_osds|get_active_osd_nums|run_osds)
       osd_controller_env
       $@
       ;;
