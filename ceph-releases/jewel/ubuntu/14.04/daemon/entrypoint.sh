@@ -1122,12 +1122,8 @@ case "$CEPH_DAEMON" in
     exit 1
   fi
 
-  if [ $0 == $(which ceph-api) ]; then
-    ceph_api $@
-  else
-    start_config
-    exec $@
-  fi
+  start_config
+  exec $@
   ;;
 esac
 
