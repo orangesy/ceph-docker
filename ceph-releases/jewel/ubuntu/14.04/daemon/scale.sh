@@ -741,6 +741,9 @@ function get_dev_osdid {
   local osd_cont_id=$(docker ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME="/dev/$1")
   if [ ! -z ${osd_cont_id} ]; then
     local osd_id=$(docker inspect --format='{{.Config.Labels.OSD_ID}}' "${osd_cont_id}" 2>/dev/null)
+  else
+    echo ""
+    return 0
   fi
   re="^[0-9]+([.][0-9]+)?$"
   if [[ ${osd_id} =~ $re ]]; then
