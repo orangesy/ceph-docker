@@ -751,18 +751,39 @@ function get_dev_osdid {
   fi
 }
 
+
+
+function get_dev_model {
+  if [ -z $1 ]; then
+    return 0
+  elif [ -f "/sys/class/block/$1/device/model" ]; then
+    local dev_model=$(cat /sys/class/block/$1/device/model 2>/dev/null )
+    echo -n ${dev_model}
+  fi
+  return 0
+}
+
 function get_dev_serial {
   if [ -z $1 ]; then
     return 0
+  elif [ -f "/sys/class/block/$1/device/vpd_pg80" ]; then
+    local dev_serial=$(cat /sys/class/block/$1/device/vpd_pg80|cut -c5- |sed s/^\s*//g 2>/dev/null )
+    echo -n ${dev_serial}
   fi
-  local dev_model=$(hdparm -I /dev/$1 2>/dev/null | awk '/Model Number/ {print $3}')
-  local dev_serial=$(hdparm -I /dev/$1 2>/dev/null | awk '/Serial Number/ {print $3}')
-  if [ -z ${dev_serial} ]; then
-    echo ${dev_model}
-  else
-    echo ${dev_model}_${dev_serial}
-  fi
+  return 0
 }
+
+function get_dev_fwrev {
+  if [ -z $1 ]; then
+    return 0
+  elif [ -f "/sys/class/block/$1/device/rev" ]; then
+    local dev_fwrev=$(cat /sys/class/block/$1/device/rev 2>/dev/null )
+    echo -n ${dev_fwrev}
+  fi
+  return 0
+}
+
+
 
 function get_osd_map {
   MAPPING_COMMAND="/opt/bin/mapping.sh"
@@ -779,8 +800,11 @@ function get_osd_map {
   for slot in ${slot_list}; do
     dev_name=$(get_slot_mapping ${slot})
     osd_id=$(get_dev_osdid ${dev_name})
+    disk_model=$(get_dev_model ${dev_name})
     disk_serial=$(get_dev_serial ${dev_name})
-    osd_map_json=${osd_map_json}'{"slot":"'$slot'","dev_name":"'${dev_name}'","osd_id":"'${osd_id}'","disk_serial":"'${disk_serial}'"}'
+    disk_fwrev=$(get_dev_fwrev ${dev_name})
+    osd_map_json=${osd_map_json}'{"slot":"'$slot'","dev_name":"'${dev_name}'","osd_id":"'${osd_id}'","disk_model":"'${disk_model}'","disk_serial":"'${disk_serial}'","disk_fwrev":"'${disk_fwrev}'"}'
+
     # add comma
     if [ ${counter} -lt ${entries} ]; then
       osd_map_json=${osd_map_json}','
