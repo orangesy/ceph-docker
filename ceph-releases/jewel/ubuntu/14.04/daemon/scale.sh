@@ -766,8 +766,9 @@ function get_dev_model {
     done
     len="16"
     count="0"
+    echo -n "0x"
     for i in $(seq $len); do
-       echo -n "\u00${a_model[$count]}"
+       echo -n "${a_model[$count]}"
        count=$(($count+1))
     done
   fi
@@ -788,8 +789,9 @@ function get_dev_serial {
     if [ ${a_pg80[1]} -eq "80" ]; then
        len=$(printf "%d" "0x${a_pg80[3]}")
        count="4"
+       echo -n "0x"
        for i in $(seq $len); do
-           echo -n "\u00${a_pg80[$count]}"
+           echo -n "${a_pg80[$count]}"
            count=$(($count+1))
        done
     else
@@ -814,8 +816,9 @@ function get_dev_fwrev {
     done
     len="4"
     count="0"
+    echo -n "0x"
     for i in $(seq $len); do
-       echo -n "\u00${a_rev[$count]}"
+       echo -n "${a_rev[$count]}"
        count=$(($count+1))
     done
   fi
