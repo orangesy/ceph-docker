@@ -757,8 +757,19 @@ function get_dev_model {
   if [ -z $1 ]; then
     return 0
   elif [ -f "/sys/class/block/$1/device/model" ]; then
-    local dev_model=$(cat /sys/class/block/$1/device/model 2>/dev/null )
-    echo -n ${dev_model}
+    local dev_model=$(od -An -t x1 /sys/block/$1/device/model 2>/dev/null)
+    declare -a a_model
+    count="0"
+    for i in $dev_model; do
+       a_model[$count]=$(echo $i)
+       count=$(($count+1))
+    done
+    len="16"
+    count="0"
+    for i in $(seq $len); do
+       echo -n "\u00${a_model[$count]}"
+       count=$(($count+1))
+    done
   fi
   return 0
 }
@@ -767,8 +778,25 @@ function get_dev_serial {
   if [ -z $1 ]; then
     return 0
   elif [ -f "/sys/class/block/$1/device/vpd_pg80" ]; then
-    local dev_serial=$(cat /sys/class/block/$1/device/vpd_pg80|cut -c5- |sed s/^\s*//g 2>/dev/null )
-    echo -n ${dev_serial}
+    pg80=$(od -An -t x1 /sys/block/$1/device/vpd_pg80)
+    declare -a a_pg80
+    count="0"
+    for i in $pg80; do
+       a_pg80[$count]=$(echo $i)
+       count=$(($count+1))
+    done
+    if [ ${a_pg80[1]} -eq "80" ]; then
+       len=$(printf "%d" "0x${a_pg80[3]}")
+       count="4"
+       for i in $(seq $len); do
+           echo -n "\u00${a_pg80[$count]}"
+           count=$(($count+1))
+       done
+    else
+       echo "page format error"
+       #exit 1
+       return 0
+    fi
   fi
   return 0
 }
@@ -777,8 +805,19 @@ function get_dev_fwrev {
   if [ -z $1 ]; then
     return 0
   elif [ -f "/sys/class/block/$1/device/rev" ]; then
-    local dev_fwrev=$(cat /sys/class/block/$1/device/rev 2>/dev/null )
-    echo -n ${dev_fwrev}
+    local dev_fwrev=$(od -An -t x1 /sys/block/$1/device/rev 2>/dev/null)
+    declare -a a_rev
+    count="0"
+    for i in $dev_fwrev; do
+       a_rev[$count]=$(echo $i)
+       count=$(($count+1))
+    done
+    len="4"
+    count="0"
+    for i in $(seq $len); do
+       echo -n "\u00${a_rev[$count]}"
+       count=$(($count+1))
+    done
   fi
   return 0
 }
