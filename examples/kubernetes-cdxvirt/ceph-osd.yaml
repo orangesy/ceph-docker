@@ -61,7 +61,7 @@ spec:
             successThreshold: 1
             exec:
               command:
-              - /osd_ctl_liveprobe.sh
+              - /osd-ctl-liveprobe.sh
             timeoutSeconds: 5
           volumeMounts:
             - name: docker
