@@ -12,7 +12,7 @@ ADD ./confd/templates/* /etc/confd/templates/
 ADD ./confd/conf.d/* /etc/confd/conf.d/
 
 # Add bootstrap script, ceph defaults key/values for KV store
-ADD entrypoint.sh config.*.sh ceph.defaults check_zombie_mons.py remove-mon.sh scale.sh etcd-watcher.sh liveprobe.sh secret-template/create-ceph-secrets.sh secret-template/ceph-secrets.yaml.template /
+ADD entrypoint.sh config.*.sh ceph.defaults check_zombie_mons.py remove-mon.sh scale.sh etcd-watcher.sh mon-liveprobe.sh osd-ctl-liveprobe.sh secret-template/create-ceph-secrets.sh secret-template/ceph-secrets.yaml.template secret-template/create-dashboard-secret.sh /
 ADD ceph-api /usr/bin/ceph-api
 
 
