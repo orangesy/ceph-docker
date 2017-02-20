@@ -2,6 +2,10 @@
 
 This Guide will take you through the process of deploying a Ceph cluster on to a Kubernetes cluster.
 
+## WARNING
+
+This example does not survive Kubernetes cluster restart! The Monitors need persistent storage. This is not covered here.
+
 ## Client Requirements
 
 In addition to kubectl, Sigil is required for template handling and must be installed in your system PATH. Instructions can be found here: <https://github.com/gliderlabs/sigil>
@@ -139,7 +143,7 @@ ceph-mon-check-deek9   1/1          Running       0          24s
 You must label your storage nodes in order to run Ceph pods on them.
 
 ```
-kubectl label node <nodename> node-type-storage
+kubectl label node <nodename> node-type=storage
 ```
 
 If you want all nodes in your Kubernetes cluster to be a part of your Ceph cluster, label them all.
@@ -173,7 +177,7 @@ First you must add the admin client key to your current namespace (or the namesp
 kubectl create secret generic ceph-client-key --from-file=./generator/ceph-client-key
 ```
 
-Now, if skyDNS is set as a resolver for your host nodes:
+Now, if skyDNS is set as a resolver for your host nodes then execute the below command as is. Otherwise modify the `ceph-mon.ceph` host to match the IP address of one of your ceph-mon pods.
 
 ```
 kubectl create -f ceph-cephfs-test.yaml --namespace=ceph
