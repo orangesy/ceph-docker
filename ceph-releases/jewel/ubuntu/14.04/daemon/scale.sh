@@ -754,114 +754,129 @@ function get_dev_osdid {
 
 
 function get_dev_model {
-  if [ -z $1 ]; then
+  local DEV_NAME="$1"
+  if [[ -z ${DEV_NAME} ]]; then
     return 0
-  elif [ $(readlink -f /sys/class/block/$1| grep '/ata[0-9]*/') ]; then
-    local ATA_PORT="$(readlink -f "/sys/class/block/$1" | sed -n "s/.*ata\([0-9]\{1,3\}\)\/host.*/\1/p")"
-    local ID_FILE="/sys/class/ata_device/dev$ATA_PORT.0/id"
+  elif [[ $(readlink -f /sys/class/block/${DEV_NAME}| grep '/ata[0-9]*/') ]]; then
+    # if no $(...) well cause "conditional binary operator expected "
+    local ATA_PORT="$(readlink -f "/sys/class/block/${DEV_NAME}" | sed -n "s/.*ata\([0-9]\{1,3\}\)\/host.*/\1/p")"
+    local ID_FILE="/sys/class/ata_device/dev${ATA_PORT}.0/id"
     local count="0"
     echo -n "0x"
-    for i in `/bin/cat $ID_FILE`; do
-        count=$(($count+1))
-        if [ $count -gt 27 ] && [ $count -le 47 ];then
-                echo -n `echo $i |/usr/bin/cut -c1-2`
-                echo -n `echo $i |/usr/bin/cut -c3-4`
-       fi
+    for i in $(cat ${ID_FILE}); do
+      ((count++))
+      if [[ ${count} -gt 27 && ${count} -le 47 ]];then
+        echo -n $(echo $i |cut -c1-2)
+        echo -n $(echo $i |cut -c3-4)
+      fi
     done
-  elif [ -f "/sys/class/block/$1/device/model" ]; then
-    local dev_model=$(od -An -t x1 /sys/block/$1/device/model 2>/dev/null)
+  elif [ -f "/sys/class/block/${DEV_NAME}/device/model" ]; then
+    local dev_model=$(od -An -t x1 /sys/block/${DEV_NAME}/device/model 2>/dev/null)
     declare -a a_model
-    count="0"
-    for i in $dev_model; do
+    local count="0"
+    for i in ${dev_model}; do
        a_model[$count]=$(echo $i)
-       count=$(($count+1))
+       ((count++))
     done
-    len="16"
-    count="0"
+    local len="16"
+    local count="0"
     echo -n "0x"
-    for i in $(seq $len); do
-       echo -n "${a_model[$count]}"
-       count=$(($count+1))
+    for i in $(seq ${len}); do
+      echo -n "${a_model[$count]}"
+      ((count++))
     done
   fi
   return 0
 }
 
 function get_dev_serial {
-  if [ -z $1 ]; then
+  local DEV_NAME="$1"
+  if [[ -z ${DEV_NAME} ]]; then
     return 0
-  elif [ $(readlink -f /sys/class/block/$1| grep '/ata[0-9]*/') ]; then
-    local ATA_PORT="$(readlink -f "/sys/class/block/$1" | sed -n "s/.*ata\([0-9]\{1,3\}\)\/host.*/\1/p")"
-    local ID_FILE="/sys/class/ata_device/dev$ATA_PORT.0/id"
+  elif [[ $(readlink -f /sys/class/block/${DEV_NAME}| grep '/ata[0-9]*/') ]]; then
+    local ATA_PORT="$(readlink -f "/sys/class/block/${DEV_NAME}" | sed -n "s/.*ata\([0-9]\{1,3\}\)\/host.*/\1/p")"
+    local ID_FILE="/sys/class/ata_device/dev${ATA_PORT}.0/id"
     local count="0"
     echo -n "0x"
-    for i in `/bin/cat $ID_FILE`; do
-        count=$(($count+1))
-        if [ $count -gt 10 ] && [ $count -le 20 ];then
-        	echo -n `echo $i |/usr/bin/cut -c1-2`
-          	echo -n `echo $i |/usr/bin/cut -c3-4`
-       fi
+    for i in $(cat ${ID_FILE}); do
+      ((count++))
+      if [[ ${count} -gt 10 && ${count} -le 20 ]];then
+        echo -n $(echo $i |cut -c1-2)
+        echo -n $(echo $i |cut -c3-4)
+      fi
     done
-  elif [ -f "/sys/class/block/$1/device/vpd_pg80" ]; then
-    pg80=$(od -An -t x1 /sys/block/$1/device/vpd_pg80)
+  elif [[ -f "/sys/class/block/${DEV_NAME}/device/vpd_pg80" ]]; then
+    local pg80=$(od -An -t x1 /sys/block/${DEV_NAME}/device/vpd_pg80)
     declare -a a_pg80
     local count="0"
-    for i in $pg80; do
-       a_pg80[$count]=$(echo $i)
-       count=$(($count+1))
+    for i in ${pg80}; do
+      a_pg80[$count]=$(echo $i)
+      ((count++))
     done
-    if [ ${a_pg80[1]} -eq "80" ]; then
-       len=$(printf "%d" "0x${a_pg80[3]}")
-       count="4"
-       echo -n "0x"
-       for i in $(seq $len); do
-           echo -n "${a_pg80[$count]}"
-           count=$(($count+1))
-       done
+    if [[ ${a_pg80[1]} -eq "80" ]]; then
+      local len=$(printf "%d" "0x${a_pg80[3]}")
+      local count="4"
+      echo -n "0x"
+      for i in $(seq ${len}); do
+        echo -n "${a_pg80[$count]}"
+        ((count++))
+      done
     else
-       echo "page format error"
-       #exit 1
-       return 0
+      echo "page format error"
+      return 0
     fi
   fi
   return 0
 }
 
 function get_dev_fwrev {
-  if [ -z $1 ]; then
+  local DEV_NAME="$1"
+  if [[ -z ${DEV_NAME} ]]; then
     return 0
-  elif [ $(readlink -f /sys/class/block/$1| grep '/ata[0-9]*/') ]; then
-    local ATA_PORT="$(readlink -f "/sys/class/block/$1" | sed -n "s/.*ata\([0-9]\{1,3\}\)\/host.*/\1/p")"
-    local ID_FILE="/sys/class/ata_device/dev$ATA_PORT.0/id"
+  elif [[ $(readlink -f /sys/class/block/${DEV_NAME}| grep '/ata[0-9]*/') ]]; then
+    local ATA_PORT="$(readlink -f "/sys/class/block/${DEV_NAME}" | sed -n "s/.*ata\([0-9]\{1,3\}\)\/host.*/\1/p")"
+    local ID_FILE="/sys/class/ata_device/dev${ATA_PORT}.0/id"
     local count="0"
     echo -n "0x"
-    for i in `/bin/cat $ID_FILE`; do
-        count=$(($count+1))
-        if [ $count -gt 23 ] && [ $count -le 27 ];then
-                echo -n `echo $i |/usr/bin/cut -c1-2`
-                echo -n `echo $i |/usr/bin/cut -c3-4`
-       fi
+    for i in $(cat ${ID_FILE}); do
+      ((count++))
+      if [[ ${count} -gt 23 && ${count} -le 27 ]];then
+        echo -n $(echo $i |cut -c1-2)
+        echo -n $(echo $i |cut -c3-4)
+      fi
     done
-  elif [ -f "/sys/class/block/$1/device/rev" ]; then
-    local dev_fwrev=$(od -An -t x1 /sys/block/$1/device/rev 2>/dev/null)
+  elif [[ -f "/sys/class/block/${DEV_NAME}/device/rev" ]]; then
+    local dev_fwrev=$(od -An -t x1 /sys/block/${DEV_NAME}/device/rev 2>/dev/null)
     declare -a a_rev
-    count="0"
-    for i in $dev_fwrev; do
-       a_rev[$count]=$(echo $i)
-       count=$(($count+1))
+    local count="0"
+    for i in ${dev_fwrev}; do
+      a_rev[$count]=$(echo $i)
+      ((count++))
     done
-    len="4"
-    count="0"
+    local len="4"
+    local count="0"
     echo -n "0x"
-    for i in $(seq $len); do
-       echo -n "${a_rev[$count]}"
-       count=$(($count+1))
+    for i in $(seq ${len}); do
+      echo -n "${a_rev[$count]}"
+      ((count++))
     done
   fi
   return 0
 }
 
-
+function get_dev_type {
+  local DEV_NAME="$1"
+  if [ -z ${DEV_NAME} ]; then
+    return 0
+  elif [[ -f "/sys/block/${DEV_NAME}/queue/rotational" ]]; then
+    local dev_type=$(cat /sys/block/${DEV_NAME}/queue/rotational)
+    if [[ ${dev_type} -eq "0" ]]; then
+      echo -n "SSD"
+    elif [[ ${dev_type} -eq "1" ]]; then
+      echo -n "HDD"
+    fi
+  fi
+}
 
 function get_osd_map {
   MAPPING_COMMAND="/opt/bin/mapping.sh"
@@ -878,10 +893,11 @@ function get_osd_map {
   for slot in ${slot_list}; do
     dev_name=$(get_slot_mapping ${slot})
     osd_id=$(get_dev_osdid ${dev_name})
+    disk_type=$(get_dev_type ${dev_name})
     disk_model=$(get_dev_model ${dev_name})
     disk_serial=$(get_dev_serial ${dev_name})
     disk_fwrev=$(get_dev_fwrev ${dev_name})
-    osd_map_json=${osd_map_json}'{"slot":"'$slot'","dev_name":"'${dev_name}'","osd_id":"'${osd_id}'","disk_model":"'${disk_model}'","disk_serial":"'${disk_serial}'","disk_fwrev":"'${disk_fwrev}'"}'
+    osd_map_json=${osd_map_json}'{"slot":"'$slot'","dev_name":"'${dev_name}'","osd_id":"'${osd_id}'","disk_type":"'${disk_type}'","disk_model":"'${disk_model}'","disk_serial":"'${disk_serial}'","disk_fwrev":"'${disk_fwrev}'"}'
 
     # add comma
     if [ ${counter} -lt ${entries} ]; then
