@@ -765,12 +765,12 @@ function get_dev_model {
     echo -n "0x"
     for i in $(cat ${ID_FILE}); do
       ((count++))
-      if [[ ${count} -gt 27 && ${count} -le 47 ]];then
+      if [[ ${count} -gt "27" && ${count} -le "47" ]];then
         echo -n $(echo $i |cut -c1-2)
         echo -n $(echo $i |cut -c3-4)
       fi
     done
-  elif [ -f "/sys/class/block/${DEV_NAME}/device/model" ]; then
+  elif [[ -f "/sys/class/block/${DEV_NAME}/device/model" ]]; then
     local dev_model=$(od -An -t x1 /sys/block/${DEV_NAME}/device/model 2>/dev/null)
     declare -a a_model
     local count="0"
@@ -800,7 +800,7 @@ function get_dev_serial {
     echo -n "0x"
     for i in $(cat ${ID_FILE}); do
       ((count++))
-      if [[ ${count} -gt 10 && ${count} -le 20 ]];then
+      if [[ ${count} -gt "10" && ${count} -le "20" ]];then
         echo -n $(echo $i |cut -c1-2)
         echo -n $(echo $i |cut -c3-4)
       fi
@@ -840,7 +840,7 @@ function get_dev_fwrev {
     echo -n "0x"
     for i in $(cat ${ID_FILE}); do
       ((count++))
-      if [[ ${count} -gt 23 && ${count} -le 27 ]];then
+      if [[ ${count} -gt "23" && ${count} -le "27" ]];then
         echo -n $(echo $i |cut -c1-2)
         echo -n $(echo $i |cut -c3-4)
       fi
