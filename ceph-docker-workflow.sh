@@ -12,7 +12,7 @@ BASEDIR=$(dirname "$0")
 LOCAL_BRANCH=$(cd $BASEDIR && git rev-parse --abbrev-ref HEAD)
 LINK_MAP=$(mktemp -p /tmp)
 DRY_RUN=false
-IGNORED_CHANGES="ceph-releases/jewel/fedora/23/*"
+IGNORED_CHANGES="ceph-releases/hammer/ubuntu/16.04/*"
 
 
 # FUNCTIONS
@@ -87,6 +87,10 @@ function copy_files {
 
 function commit_new_changes {
   echo_info "CREATING COMMIT"
+  if [[ ! -d base ]]; then
+    mkdir base
+    echo "workaround for kraken and above, do not care about me" > base/README.md
+  fi
   git add base daemon demo
   git commit -s -m "Building $BRANCH_NAME"
 }

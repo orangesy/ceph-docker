@@ -15,15 +15,12 @@ function log() {
   [[ -z ${log_level} ]] && log_level="INFO";
   [[ -z ${log_color} ]] && log_color="${LOG_INFO_COLOR}";
 
-  echo -e "${log_color}[$(date +"%Y-%m-%d %H:%M:%S")] [${log_level}] ${log_text} ${LOG_DEFAULT_COLOR}";
+  echo -e "${log_color}$(date +"%Y-%m-%d %H:%M:%S.%6N") ${log_level} ${log_text} ${LOG_DEFAULT_COLOR}";
   return 0;
 }
 
-function log_info() { log "$@"; }
 function log_success() { log "$1" "SUCCESS" "${LOG_SUCCESS_COLOR}"; }
 function log_err() { log "$1" "ERROR" "${LOG_ERROR_COLOR}"; }
-function err_status() { log "$1" "ERROR & WAIT" "${LOG_ERROR_COLOR}"; echo "$1" >/status; /usr/bin/tail -f /dev/null; }
-function success_status() { echo "$1" >/status; }
 function log_warn() { log "$1" "WARN" "${LOG_WARN_COLOR}"; }
 
 function ceph_api () {
@@ -309,17 +306,17 @@ function crush_initialization () {
   else
 
     # initialization of crushmap
-    log_info "Initialization of crushmap"
+    log "Initialization of crushmap"
     # create a crush rule, chooseleaf as osd.
     ceph ${CEPH_OPTS} osd crush rule create-simple replicated_type_osd default osd firstn
 
     # crush_ruleset 0 for host, 1 for osd
     case "${DEFAULT_CRUSH_LEAF}" in
       host)
-        ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 0
+        set_crush_ruleset ${DEFAULT_POOL} 0
         ;;
       osd)
-        ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 1
+        set_crush_ruleset ${DEFAULT_POOL} 1
         ;;
       *)
         log_warn "DEFAULT_CRUSH_LEAF not in [ osd | host ], do nothing"
@@ -341,7 +338,7 @@ function crush_initialization () {
     kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} put ${CLUSTER_PATH}/initialization_complete true > /dev/null 2>&1
   fi
 
-  log_info "Removing lock for ${HOSTNAME}"
+  log "Removing lock for ${HOSTNAME}"
   kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} del ${CLUSTER_PATH}/osd_init_lock > /dev/null 2>&1
 
 }
@@ -394,7 +391,7 @@ function auto_change_crush () {
       ;;
   esac
 
-  log_info "Removing lock for ${HOSTNAME}"
+  log "Removing lock for ${HOSTNAME}"
   kviator --kvstore=${KV_TYPE} --client=${KV_IP}:${KV_PORT} del ${CLUSTER_PATH}/osd_crush_lock > /dev/null 2>&1
 }
 
@@ -405,9 +402,9 @@ function crush_type_space () {
     log_warn "No Storage Node, do nothing with changing crush_type"
     return 0
   elif [ ${NODEs} -eq "1" ]; then
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 1
+    set_pool_size ${DEFAULT_POOL} 1
   else
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 2
+    set_pool_size ${DEFAULT_POOL} 2
   fi
 
   # multiple = OSDs / 2, pg_num = PGs_PER_OSD x multiple
@@ -428,9 +425,9 @@ function crush_type_safety () {
     log_warn "No Storage Node, do nothing with changing crush_type"
     return 0
   elif [ ${NODEs} -lt "3" ]; then
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size ${NODEs}
+    set_pool_size ${DEFAULT_POOL} ${NODEs}
   else
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} size 3
+    set_pool_size ${DEFAULT_POOL} 3
   fi
 
   # multiple = OSDs / 3, pg_num = PGs_PER_OSD x multiple
@@ -448,24 +445,43 @@ function crush_type_safety () {
 function auto_change_crush_leaf () {
   # crush_ruleset 0 for host, 1 for osd
   if [ ${NODEs} -ge $1 ]; then
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 0
+    set_crush_ruleset ${DEFAULT_POOL} 0
   else
-    ceph ${CEPH_OPTS} osd pool set ${DEFAULT_POOL} crush_ruleset 1
+    set_crush_ruleset ${DEFAULT_POOL} 1
+  fi
+}
+
+function set_crush_ruleset () {
+  # $1 = pool_name $2 = crush_ruleset
+  log "Set pool \"$1\" crush_ruleset to \"$2\""
+  if ! ceph ${CEPH_OPTS} osd pool set $1 crush_ruleset $2 2>/dev/null; then
+    log_warn "Fail to set crush_ruleset of $1 pool"
+    return 0
+  fi
+}
+
+function set_pool_size () {
+  # $1 = pool_name $2 = pool_size
+  log "Set pool \"$1\" replications to \"$2\""
+  if ! ceph ${CEPH_OPTS} osd pool set $1 size $2 2>/dev/null; then
+    log_warn "Fail to set replications of $1 pool"
+    return 0
   fi
 }
 
 function set_pg_num () {
   # $1 = pool_name, $2 = pg_num
-   if ! ceph ${CEPH_OPTS} osd pool set $1 pg_num $2; then
-     log_warn "Fail to Set pg_num of $1 pool"
-     return 0
-   fi
+  log "Set pool \"$1\" pg_num to \"$2\""
+  if ! ceph ${CEPH_OPTS} osd pool set $1 pg_num $2 2>/dev/null; then
+    log_warn "Fail to set pg_num of $1 pool"
+    return 0
+  fi
 
   # wait for pg_num resized and change pgp_num
   until [ $(ceph ${CEPH_OPTS} -s | grep creating -c) -eq 0 ]; do
     sleep 5
   done
-  if ! ceph ${CEPH_OPTS} osd pool set $1 pgp_num $2; then
+  if ! ceph ${CEPH_OPTS} osd pool set $1 pgp_num $2 2>/dev/null; then
     log_warn "Fail to Set pgp_num of $1 pool"
     return 0
   fi
@@ -1000,7 +1016,7 @@ function hotplug_OSD () {
           run_osds
           ;;
         DELETE)
-          log_info "Remove ${hotplug_disk}"
+          log "Remove ${hotplug_disk}"
           if is_osd_running ${hotplug_disk}; then
             local CONT_ID=$(${DOCKER_CMD} ps -q -f LABEL=CEPH=osd -f LABEL=DEV_NAME=${hotplug_disk})
             ${DOCKER_CMD} stop ${CONT_ID} &>/dev/null || true
@@ -1018,7 +1034,7 @@ function clear_lvs_disks () {
   lvs=$(lvscan | grep '/dev.*' | awk '{print $2}')
 
   if [ -n "$lvs" ]; then
-    log_info "Find logic volumes, inactive them."
+    log "Find logic volumes, inactive them."
     for lv in $lvs
     do
       lvremove -f "${lv//\'/}"
@@ -1028,7 +1044,7 @@ function clear_lvs_disks () {
 
   vgs=$(vgdisplay -C --noheadings --separator '|' | cut -d '|' -f 1)
   if [ -n "$vgs" ]; then
-    log_info "Find VGs, delete them."
+    log "Find VGs, delete them."
     for vg in $vgs
     do
       vgremove -f "$vg"
@@ -1039,7 +1055,7 @@ function clear_lvs_disks () {
 
   pvs=$(pvscan -s | grep '/dev/sd[a-z].*' || true)
   if [ -n "$pvs" ]; then
-    log_info "Find PVs, delete them."
+    log "Find PVs, delete them."
     for pv in $pvs
     do
       pvremove -ff -y "$pv"
@@ -1060,14 +1076,14 @@ function clear_raid_disks () {
   do
     devs=$(mdadm --detail --export "${md}" | grep MD_DEVICE_.*_DEV | cut -d '=' -f 2)
     if [ -z "$devs" ]; then
-      log_info "No invalid devices"
+      log "No invalid devices"
       return 1
     fi
     mdadm --stop ${md}
 
     for dev in ${devs}
     do
-      log_info "Clear MD device: $dev"
+      log "Clear MD device: $dev"
       mdadm --wait --zero-superblock --force "$dev"
     done
   done
