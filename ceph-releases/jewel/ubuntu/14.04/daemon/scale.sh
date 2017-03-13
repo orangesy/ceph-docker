@@ -36,6 +36,9 @@ function ceph_api () {
     get_osd_map)
       $@
       ;;
+    get_recovery_process)
+      $@
+      ;;
     *)
       log_warn "Usahe: "
       ;;
@@ -924,6 +927,32 @@ function get_osd_map {
   osd_map_json=${osd_map_json}']}'
   echo ${osd_map_json}
 }
+
+
+function get_recovery_process {
+  local DD=$(date +%s)
+  local RELOGTMP="/tmp/ceph_recovery_countdown_tmp.$DD"
+
+  ceph -s > ${RELOGTMP}
+  if [[ $(grep '^recovery' $RELOGTMP) ]]; then
+    local status="x"
+  else
+    local status="o"
+  fi
+  if [[ ${status} == "o" ]]; then
+    local ceph_status=$(awk '/health/{print $2}' ${RELOGTMP})
+    local tl="0"
+  elif [[ ${status} == "x" ]]; then
+    local ceph_status=$(awk '/health/{print $2}' ${RELOGTMP})
+    local pa=$(egrep '(recovery.*degraded)' ${RELOGTMP}|awk '{print $2}'|awk -F\/ '{print $1}')
+    local sp=$(egrep '(recovery io.*)' ${RELOGTMP}|awk '{print $5}')
+    local tl=$(echo ${pa} ${sp}|awk '{print $1/$2}')
+  fi
+  rm -rf ${RELOGTMP}
+  local recovery_process_json='{"ceph_status":"'${ceph_status}'","recovery_time":"'${tl}'"}'
+  echo ${recovery_process_json}
+}
+
 
 function get_active_osd_nums () {
   ${DOCKER_CMD} ps -q -f LABEL=CEPH=osd | wc -l
